@@ -21,6 +21,15 @@
   --line: #2a4438;
   --line-soft: #1c3027;
 
+  /* One source for every transition length. Anything that used to invent its own
+     duration — CSS or a reducer — should quote these instead. */
+  --dur-fast: 200ms;
+  --dur-normal: 240ms;
+  --dur-slow: 320ms;
+  /* Hover/press feedback. Kept at its original 140ms so consolidating the source does
+     not change how quick the interface feels. */
+  --dur-hover: 140ms;
+
   /* Brass — the single saturated accent in the whole product. */
   --brass: #c19a3c;
   --brass-bright: #e8cb7d;

@@ -107,7 +107,7 @@ button {
   background: #16261f;
   color: var(--parchment-dim);
   cursor: pointer;
-  transition: background 0.14s, border-color 0.14s, color 0.14s;
+  transition: background var(--dur-hover), border-color var(--dur-hover), color var(--dur-hover);
 }
 
 button:hover:not(:disabled) {
