@@ -148,7 +148,7 @@ packages/engine/src/
 │   ├── zone-transitions.ts            # Centralized MOVE_CARD validation + application
 │   ├── mana-pool.ts / mana-abilities.ts
 │   ├── option-service.ts              # Computes available actions for a card in a zone
-│   ├── room-factory.ts                # createRoom, joinRoom, setupRPS, resolveRPS, buildStartingCardMutations
+│   ├── room-factory.ts                # createRoom, joinRoom, buildStartingCardMutations
 │   ├── turn-history.ts / library-operations.ts / card-utils.ts
 │   ├── permission-registry.ts         # Live cast and target permission checks
 │   └── handlers/                      # One file per registered action
@@ -162,7 +162,6 @@ packages/engine/src/
 │       ├── end-turn-handler.ts        # end_turn (skip-to-end)
 │       ├── pass-priority-handler.ts   # pass_priority
 │       ├── resolve-stack-handler.ts   # resolve_stack (debug)
-│       └── rps-play-handler.ts        # rpsPlay
 └── shared/                            # Cross-cutting runtime and rule helpers
     ├── game-logger.ts                 # Structured logger (engineLogger, serverLogger)
     ├── runtime-context.ts             # UUID/random capabilities + production defaults
@@ -268,7 +267,7 @@ GameRoom {
     roomId, player1Id, player2Id
     players: Record<PlayerId, PlayerState>   // all player data
     phase: Phase                             // turn clock (TURN_SEQUENCE)
-    status: GameStatus                       // 'waiting' | 'RPS' | 'playing' | 'gameOver'
+    status: GameStatus                       // 'waiting' | 'playing' | 'gameOver'
     engineState: 'waiting_for_player' | 'resolving_stack' | 'state_based_actions' | 'game_over'
     activeTurnPlayerId, priorityPlayerId, lastPassedPlayerId
     stack: StackObject[]                     // a ZONE, not a phase
@@ -279,7 +278,6 @@ GameRoom {
     replacementEffects?, delayedTriggers?, turnHistory?, triggerQueue?
     pendingChoice?, pendingTriggers?
     effectTimestamp?, effectSequence?, turnNumber?, outcome?
-    rpsState: { status, playedCards }
 }
 ```
 
@@ -296,7 +294,7 @@ export const TURN_SEQUENCE = [
   'stateEndPhase', 'cleanupStep',
 ] as const;
 export type Phase = typeof TURN_SEQUENCE[number];
-export type GameStatus = 'waiting' | 'RPS' | 'playing' | 'gameOver';
+export type GameStatus = 'waiting' | 'playing' | 'gameOver';
 ```
 
 ### 3.6 `game-mutation.types.ts` — The Reducer's Input
@@ -463,7 +461,6 @@ priority), `canMeetCondition()`, `canPayCost()` (mana via `ManaPool.canPay()`, l
 | `end-turn-handler.ts` | `end_turn` | Skip-to-end (`advancePhase('skipToEnd')`) |
 | `pass-priority-handler.ts` | `pass_priority` | Priority pipeline |
 | `resolve-stack-handler.ts` | `resolve_stack` | Debug resolution through the normal pipeline |
-| `rps-play-handler.ts` | `rpsPlay` | RPS mini-game; server finishes deck setup |
 
 **Cost vs effect zone changes:** the hand→stack move in `propose()` is a *cost* (immediate,
 uncounterable). The stack→battlefield/graveyard move at resolution is a *structural game rule*.
@@ -541,9 +538,9 @@ Mana", "Attack", and activated abilities. Returns `ActionOption[]` with `disable
 #### `room-factory.ts` — Room Factory
 
 Exported functions: `createRoom(roomId, player1Id)`, `joinRoom(room, player2Id)`,
-`setupRPS(room)`, `resolveRPS(room)`, `buildStartingCardMutations(room)`.
+`buildStartingCardMutations(room)`.
 
-RPS card creation and starting-deck construction accept runtime capabilities for deterministic
+Starting-deck construction accepts runtime capabilities for deterministic
 card UUIDs and Fisher-Yates randomness while retaining production defaults for ordinary callers.
 
 #### `mana-pool.ts` — Centralized Mana Operations
@@ -627,7 +624,7 @@ without introducing a general event framework.
 #### Serialized match state versus process session state
 
 `GameRoom` remains the serialized authoritative match aggregate: player membership, setup/debug
-snapshots, RPS/game status, phases, priority, stack, choices, cards, combat, and effects all affect
+snapshots, game status, phases, priority, stack, choices, cards, combat, and effects all affect
 rule execution or recovery. `RoomRuntime` owns process-local session resources: engine instances,
 socket-to-room and player identity bindings, destruction timers, runtime capabilities, store
 coordination, and transport ports. Sockets, timers, stores, and engine objects are never serialized.
@@ -643,8 +640,9 @@ would not improve the current boundary.
 |---|---|
 | `connection` | Verify a game-scoped token, derive server-owned identity/seat, emit `sessionReady`; an owned room can rejoin with snapshot, otherwise `rejoinFailed` |
 | `createRoom` | Create room, `replaceRoomEngine`, emit `roomCreated` + `roomSnapshot` |
-| `joinRoom` | Add player 2, `replaceRoomEngine`, `setupRPS`, `SET_STATUS 'RPS'`, emit `startGame` / `rpsPhase` / `roomSnapshot` |
-| `playerAction` | Parse packet → `runtime.executePlayerAction()`; emit an error or the post-RPS snapshot returned by the runtime |
+| `joinRoom` | Add player 2, open the lobby round, emit viewer-specific `roomSnapshot` |
+| `submitRps` | Lock one lobby pick; when both are ready, call `GameEngine.startMatch(firstPlayerId)` and publish the dealt snapshots plus the revealed round result |
+| `playerAction` | Parse packet → `runtime.executePlayerAction()`; emit its error or ordinary match updates |
 | `getOptions` | Call `runtime.getOptions()`, emit `optionsForCard` (and callback) |
 | `disconnect` | Unbind socket; destroy immediately if pre-game and other player gone, else schedule a 30s grace timer |
 

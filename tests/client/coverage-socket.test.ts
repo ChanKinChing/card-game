@@ -357,15 +357,12 @@ describe('informational and error handlers', () => {
     send('playerJoined', { protocolVersion: 1, playerId: 'player2' });
     expect(info).toHaveBeenCalledWith('opponent:joined', 'Opponent joined', { opponentId: 'player2' });
 
-    send('rpsPhase', { protocolVersion: 1, message: 'Choose a card' });
-    expect(info).toHaveBeenCalledWith('rps:phase', 'Choose a card');
 
-    send('startGame', { protocolVersion: 1, roomId: 'room' });
-    expect(info).toHaveBeenCalledWith('game:started', 'Game started', { roomId: 'room' });
+    send('startGame', { protocolVersion: 1, roomId: 'room', firstPlayerId: 'player1', picks: ['rock', 'rock'] });
+    expect(info).toHaveBeenCalledWith('game:started', 'Game started', { roomId: 'room', firstPlayerId: 'player1', picks: ['rock', 'rock'] });
 
     info.mockClear();
     send('playerJoined', { playerId: 'no-protocol' });
-    send('rpsPhase', { message: 'not protocol tagged' });
     send('startGame', { roomId: 'no-protocol' });
     expect(info).not.toHaveBeenCalled();
   });

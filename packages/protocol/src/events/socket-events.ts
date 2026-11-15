@@ -10,9 +10,19 @@ import type { PlayerView, ActionOption } from '../views/player-view';
 import type { ViewDelta } from '../deltas/view-delta';
 import type { SessionInfo } from '../rest/auth';
 export interface RoomSetupMessage extends Versioned { deckId?: string }
-export interface SnapshotMessage extends Versioned { seq: number; room: PlayerView; testContext?: {scenarioId:string;revision:number;name:string} }
+export const RPS_PICKS = ['rock', 'paper', 'scissors'] as const;
+export type RpsPick = typeof RPS_PICKS[number];
+export interface LobbyRpsView { myPick: RpsPick | null; opponentReady: boolean }
+export const SubmitRpsSchema = z.object({ protocolVersion: z.literal(PROTOCOL_VERSION),
+  roomId: z.string().min(1).max(128), pick: z.enum(RPS_PICKS) }).strict();
+export interface SnapshotMessage extends Versioned { lobbyRps?: LobbyRpsView; seq: number; room: PlayerView; testContext?: {scenarioId:string;revision:number;name:string} }
 export interface OptionsMessage extends Versioned { roomId: string | null; cardUuid: string | null; zone: 'hand' | 'battlefield' | null; options: ActionOption[] }
 export interface RoomMessage extends Versioned { roomId: string }
+export interface MatchStartedMessage extends RoomMessage {
+  firstPlayerId: string;
+  /** Picks in seat order. Sent only after the round resolves. */
+  picks: readonly [RpsPick, RpsPick];
+}
 export const RoomSnapshotRequestSchema = z.object({
   protocolVersion: z.literal(PROTOCOL_VERSION),
   roomId: z.string().min(1).max(128),
@@ -27,6 +37,7 @@ export interface ClientEvents {
   joinRoom(message: RoomMessage & RoomSetupMessage): void;
   requestRoomSnapshot(message: RoomMessage): void;
   playerAction(message: ClientActionMessage): void;
+  submitRps(message: z.infer<typeof SubmitRpsSchema>): void;
   getOptions(message: OptionsRequest, acknowledge?: (message: OptionsMessage) => void): void;
 }
 export interface ServerEvents {
@@ -43,8 +54,7 @@ export interface ServerEvents {
   rejoined(message: RoomMessage & { playerId: string }): void;
   rejoinFailed(message: Versioned & { reason: string }): void;
   playerJoined(message: Versioned & { playerId: string }): void;
-  startGame(message: RoomMessage): void;
-  rpsPhase(message: Versioned & { message: string }): void;
+  startGame(message: MatchStartedMessage): void;
   roomFull(message: Versioned): void;
   error(message: ErrorMessage): void;
 }

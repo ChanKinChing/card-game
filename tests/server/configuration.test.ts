@@ -21,9 +21,10 @@ function hash(value: unknown): string {
 }
 describe('configuration ownership and preserved content', () => {
   it('locks migrated card definitions and preserves every pre-extraction preset exactly', () => {
-    const originalCards = Object.fromEntries(baseline.cardIds.map(id => [id, getBlueprint(id)]));
-    expect(Object.keys(originalCards)).toHaveLength(baseline.cardCount);
-    expect(cardDefinitionHash(originalCards)).toBe(schemaBaseline.scorchRelicRevision.originalSubsetSemanticCatalogHash);
+    const originalCards = Object.fromEntries(baseline.cardIds.filter(id => !schemaBaseline.lobbyRpsRevision.retiredCardIds.includes(id)).map(id => [id, getBlueprint(id)]));
+    expect(Object.keys(originalCards)).toHaveLength(baseline.cardCount - schemaBaseline.lobbyRpsRevision.retiredCardIds.length);
+    for (const id of schemaBaseline.lobbyRpsRevision.retiredCardIds) expect(() => getBlueprint(id)).toThrow();
+    expect(cardDefinitionHash(originalCards)).toBe(schemaBaseline.lobbyRpsRevision.originalSubsetSemanticCatalogHash);
     const presets = { gameConfig: gameConfig.setup, triggerTestSetup, st01aTestSetup, workbookTestSetup, smallMechanicsTestSetup };
     for (const [name, setup] of Object.entries(presets)) expect(hash(setup)).toBe(baseline.presets[name as keyof typeof baseline.presets]);
     for (const [id, card] of Object.entries(cards)) { expect((card as { id: string }).id).toBe(id); expect(getBlueprint(id).id).toBe(id); }

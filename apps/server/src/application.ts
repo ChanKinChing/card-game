@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import helmet from 'helmet';
 import { Server as SocketIOServer, type Socket } from 'socket.io';
-import { PROTOCOL_VERSION, AutoPassRequestSchema, PlatformResponseSchema, isProtocolMessage, RoomSetupRequestSchema, JoinRoomRequestSchema, RoomSnapshotRequestSchema, type OptionsMessage, type SnapshotMessage } from '@card-game/protocol';
+import { PROTOCOL_VERSION, AutoPassRequestSchema, PlatformResponseSchema, isProtocolMessage, RoomSetupRequestSchema, JoinRoomRequestSchema, SubmitRpsSchema, RoomSnapshotRequestSchema, type OptionsMessage, type SnapshotMessage } from '@card-game/protocol';
 import { createBrowserRouter } from './auth/browser-routes';
 import { createPasswordLimiter } from './auth/password-rate-limit';
 import { gameConfig, getRuleDefaults, getSetupPreset, snapshotSetupConfig } from '@card-game/engine/config';
@@ -143,6 +143,7 @@ export function createGameApplication(options: ApplicationOptions = {}) {
       protocolVersion: PROTOCOL_VERSION,
       seq: sync.currentSeq(room.roomId),
       room: buildPlayerView(room, playerId),
+      lobbyRps: runtime.lobbyView(room.roomId, playerId),
       ...(run ? { testContext: { scenarioId: run.scenarioId, revision: run.revision, name: run.snapshot.name } } : {}),
     };
   };
@@ -285,9 +286,18 @@ export function createGameApplication(options: ApplicationOptions = {}) {
       socket.emit('sessionReady', { ...auth.info(identity.session, joined.roomId), playerId: joined.playerId });
       socket.join(joined.roomId); socket.emit('roomJoined', { protocolVersion: PROTOCOL_VERSION, roomId: joined.roomId });
       io.to(joined.roomId).emit('playerJoined', { protocolVersion: PROTOCOL_VERSION, playerId: joined.playerId });
-      io.to(joined.roomId).emit('startGame', { protocolVersion: PROTOCOL_VERSION, roomId: joined.roomId });
-      io.to(joined.roomId).emit('rpsPhase', { protocolVersion: PROTOCOL_VERSION, message: 'Choose Rock, Paper, or Scissors!' });
       publishSnapshot(joined.room);
+    });
+    socket.on('submitRps', (input: unknown) => {
+      const parsed = SubmitRpsSchema.safeParse(input);
+      if (!parsed.success) { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: 'Invalid opening pick' }); return; }
+      const { roomId, pick } = parsed.data;
+      const result = runtime.submitRps(socket.id, roomId, pick);
+      if (result.kind === 'error') { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: result.message }); return; }
+      publishSnapshot(result.room);
+      if (result.kind === 'started') for (const socketId of runtime.recipientsFor(result.room).values()) {
+        io.to(socketId).emit('startGame', { protocolVersion: PROTOCOL_VERSION, roomId, firstPlayerId: result.firstPlayerId, picks: result.picks });
+      }
     });
     socket.on('playerAction', (input: unknown) => {
       const packet = parseActionPacket(input);
@@ -299,7 +309,6 @@ export function createGameApplication(options: ApplicationOptions = {}) {
       } catch { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: 'Invalid action option', commandId: packet.commandId, action: packet.actionId }); return; }
       const result = runtime.executePlayerAction(socket.id, packet);
       if (result.kind === 'error') { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: result.message, commandId: result.commandId, action: result.action }); return; }
-      if (result.snapshot) publishSnapshot(result.snapshot);
     });
     socket.on('getOptions', (input: unknown, acknowledge?: unknown) => {
       const data = typeof input === 'object' && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : {};

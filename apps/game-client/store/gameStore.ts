@@ -51,6 +51,8 @@ interface GameStore {
   viewUpdate: 'snapshot' | 'delta';
   lastImpacts?: DamageImpactView[];
   testContext: SnapshotMessage['testContext'];
+  openingResult?: { firstPlayerId: string; picks: readonly [string, string] };
+  lobbyRps?: SnapshotMessage['lobbyRps'];
 
   // UI state (client-only)
   contextMenu: ContextMenuState | null;
@@ -64,7 +66,7 @@ interface GameStore {
 
   // Actions
   applyDelta: (delta: ViewDelta) => 'applied' | 'ignored' | 'gap';
-  setRoom: (room: PlayerView, seq?: number, testContext?: SnapshotMessage['testContext']) => void;
+  setRoom: (room: PlayerView, seq?: number, testContext?: SnapshotMessage['testContext'], lobbyRps?: SnapshotMessage['lobbyRps']) => void;
   setRoomId: (id: string) => void;
   setMyPlayerId: (id: string) => void;
   clearSession: () => void;
@@ -91,7 +93,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   myPlayerId: null,
   roomSync: 'waiting',
   viewUpdate: 'snapshot',
-  testContext: undefined,
+  testContext: undefined, lobbyRps: undefined, openingResult: undefined,
   contextMenu: null,
   targeting: null,
   pendingCard: null,
@@ -162,7 +164,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     set((state) => ({
-      room: nextRoom,
+      room: nextRoom, openingResult: undefined,
       lastSeq: delta.seq,
       viewUpdate: 'delta',
       lastImpacts: delta.impacts,
@@ -184,21 +186,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return 'applied';
   },
 
-  setRoom: (room, seq = 0, testContext) => {
+  setRoom: (room, seq = 0, testContext, lobbyRps) => {
     if (room.protocolVersion !== PROTOCOL_VERSION) return;
     if (gameConfig.logging.actions) clientLogger.info('snapshot:applied', 'Room restored', { roomId: room.roomId, phase: room.phase, stack: room.stack.length, choiceId: (room.pendingChoice && room.pendingChoice.kind !== 'waiting' ? room.pendingChoice.id : undefined) });
     // Full restoration owns the board; an unsent local declaration is not part
     // of the snapshot. Committed combat remains on room.combat.
     const log = get().room?.roomId === room.roomId && get().room?.viewerId === room.viewerId && get().log.length
       ? get().log.filter(entry => entry.seq <= seq) : readGameLog(room.roomId, room.viewerId, seq);
-    set({ room, log, lastSeq: seq, roomSync: 'live', viewUpdate: 'snapshot', testContext, lastImpacts: undefined,
+    set({ room, log, lastSeq: seq, roomSync: 'live', viewUpdate: 'snapshot', testContext, lobbyRps, openingResult: undefined, lastImpacts: undefined,
       targeting: null, contextMenu: null, pendingCard: null, combatSelection: EMPTY_COMBAT_SELECTION, combatNotification: null });
   },
 
   setRoomId: (id) => {
     setStoredRoomId(id);
     if (id !== get().roomId) set({
-      roomId: id, room: null, lastSeq: 0, roomSync: 'waiting', viewUpdate: 'snapshot', testContext: undefined,
+      roomId: id, room: null, lastSeq: 0, roomSync: 'waiting', viewUpdate: 'snapshot', testContext: undefined, lobbyRps: undefined, openingResult: undefined,
       log: [], lastImpacts: undefined, autoPass: { enabled: false, passAt: null },
     });
   },
@@ -214,7 +216,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       roomSync: 'waiting',
       viewUpdate: 'snapshot',
       lastImpacts: undefined,
-      testContext: undefined,
+      testContext: undefined, lobbyRps: undefined, openingResult: undefined,
       myPlayerId: null,
       contextMenu: null,
       targeting: null,
@@ -404,17 +406,6 @@ export function selectIsMyTurn(state: GameStore): boolean {
 
 export function selectCurrentPhase(state: GameStore): Phase | null {
   return state.room?.phase ?? null;
-}
-
-export function selectRpsWaitingForOpponent(state: GameStore): boolean {
-  const { room, myPlayerId } = state;
-  if (!room || !myPlayerId) return false;
-  if (room.status !== 'RPS') return false;
-  const opponentId = selectOpponentId(state);
-  if (!opponentId) return false;
-  const myChoice = room.rpsState.playedCards[myPlayerId];
-  const oppChoice = room.rpsState.playedCards[opponentId];
-  return Boolean(myChoice) && !oppChoice;
 }
 
 /**

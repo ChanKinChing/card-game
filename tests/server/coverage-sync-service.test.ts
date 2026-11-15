@@ -630,7 +630,7 @@ describe('SyncService coverage — mutation mapping', () => {
 
   it('maps status, engine state and pending choice mutations', () => {
     const room = createTestRoom();
-    expect(find(run(room, [{ type: 'SET_STATUS', status: 'RPS' }]), 'status')?.value).toBe('RPS');
+    expect(find(run(room, [{ type: 'SET_STATUS', status: 'waiting' }]), 'status')?.value).toBe('waiting');
     expect(find(run(room, [{ type: 'SET_ENGINE_STATE', state: 'resolving_stack' }]), 'engineState')?.value).toBe('resolving_stack');
     expect(find(run(room, [{ type: 'SET_PENDING_CHOICE', choice: null }]), 'pendingChoice')).toMatchObject({ op: 'update', value: null });
   });
@@ -690,12 +690,10 @@ describe('SyncService coverage — mutation mapping', () => {
     expect(find(advance, 'turnHistory')).toBeDefined();
   });
 
-  it('maps priority, last-passed and RPS mutations', () => {
+  it('maps priority, and last-passed mutations', () => {
     const room = createTestRoom();
     expect(find(run(room, [{ type: 'SET_PRIORITY', playerId: null }]), 'priorityPlayerId')).toMatchObject({ op: 'update', value: null });
     expect(find(run(room, [{ type: 'SET_LAST_PASSED', playerId: P2 }]), 'lastPassedPlayerId')?.value).toBe(P2);
-    expect(find(run(room, [{ type: 'SET_RPS_STATUS', status: 'waiting' }]), 'rpsState.status')?.value).toBe('waiting');
-    expect(find(run(room, [{ type: 'SET_RPS_PLAYED_CARD', playerId: P1, card: 'rock' }]), `rpsState.playedCards.${P1}`)?.value).toBe('rock');
   });
 });
 

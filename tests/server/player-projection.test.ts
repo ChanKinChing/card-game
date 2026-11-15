@@ -48,12 +48,6 @@ describe('player projection boundary', () => {
     expect(view.battlefield[0].targetGroups['activate_ability:' + option.data?.abilityId]).toHaveLength(1);
   });
 
-  it('hides an opponent RPS play until the round has resolved', () => {
-    const room = createTestRoom(); room.rpsState = { status: 'pending', playedCards: { player2: 'rock' } };
-    expect(buildPlayerView(room, 'player1').rpsState.playedCards).toEqual({});
-    expect(buildPlayerView(room, 'player2').rpsState.playedCards).toEqual({ player2: 'rock' });
-    room.rpsState.status = 'resolved'; expect(buildPlayerView(room, 'player1').rpsState.playedCards.player2).toBe('rock');
-  });
   it('exposes only owned hands, public counts and display fields, never raw blueprints or decks', () => {
     const room = createTestRoom(); fillTestLibraries(room);
     const hidden = instantiateCard('choice-practice'); hidden.state.ownerId = 'player2'; hidden.state.controllerId = 'player2'; hidden.state.zone = 'hand';

@@ -46,7 +46,7 @@ export function buildCardView(room: GameRoom, viewerId: string, card: CardInstan
       ...(state.attachedToPlayerId ? { attachedToPlayerId: state.attachedToPlayerId } : {}),
       ...(state.protectorId && isPublicPermanent(room, state.protectorId) ? { protectorId: state.protectorId } : {}),
     },
-    ...(interactive && state.zone === 'hand' ? { defaultActionId: room.status === 'RPS' ? 'rpsPlay' : effective.cardTypes.includes('Land') ? 'play_land' : 'cast_spell' } : {}),
+    ...(interactive && state.zone === 'hand' && room.status === 'playing' ? { defaultActionId: effective.cardTypes.includes('Land') ? 'play_land' : 'cast_spell' } : {}),
     actions: interactive && (state.zone === 'hand' || onBoard) ? projectActionOptions(options.getOptions(room, viewerId, card.uuid, state.zone === 'hand' ? 'hand' : 'battlefield'), room.roomId, viewerId) : [],
     targetGroups: interactive ? buildTargetGroups(room, viewerId, card) : {},
     canAttack, canBlock: canParticipate && effectiveActionPermission(effective, viewerId, 'block').allowed,

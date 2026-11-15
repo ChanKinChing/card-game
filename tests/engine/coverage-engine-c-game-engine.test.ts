@@ -82,7 +82,7 @@ describe('game engine command guards and logging', () => {
     try {
       expect(engine.executePlayerAction('player1', 'cast_spell', { cardUuid: card.uuid }).success).toBe(true);
       const choice = engine.roomState.pendingChoice!;
-      engine.roomState.status = 'RPS';
+      engine.roomState.status = 'waiting';
       expect(engine.executePlayerAction('player1', 'choose', { choiceId: choice.id, choices: ['m'] })).toEqual({
         success: false, phase: 'validate', reason: 'Action requires playing status',
       });

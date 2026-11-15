@@ -34,7 +34,6 @@ The player boundary generates stack identities rather than accepting a supplied
 | `pass_priority` | PhaseBar | Engine priority pipeline |
 | `resolve_stack` | DebugControls | Debug resolution through the normal effect/mutation pipeline |
 | `end_turn` | DebugControls | Debug skip-to-end through the normal phase/mutation pipeline |
-| `rpsPlay` | RPS cards | Validate/propose/apply with rpsPlayHandler; server finishes deck setup |
 
 Lower-level engine methods remain available to rules code and tests. Socket
 routes use the single command boundary. Registered orchestration handlers are
@@ -102,3 +101,5 @@ Run `npm test`, both `npm run typecheck:server` and
 `npm run typecheck:client`, and `npm run build` after action-routing changes.
 The command, packet, debug rendering and actual Socket.IO tests cover this
 boundary without a new server factory.
+
+The opening Rock, Paper, Scissors round uses the lobby socket event **submitRps**, not an engine action ID.

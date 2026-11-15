@@ -7,7 +7,7 @@ import { declarationPlayer } from '@card-game/engine/shared/turn-utils';
 import { describeStackObject } from '@card-game/engine/shared/action-description';
 import { gameConfig, landPlayLimit } from '@card-game/engine/config';
 import { PROTOCOL_VERSION, type PlayerView, type StackView } from '@card-game/protocol';
-import { assertViewer, canSeeStackSource, canSeeHand, canSeeRpsPlay } from './reveal-policy';
+import { assertViewer, canSeeStackSource, canSeeHand } from './reveal-policy';
 import { buildCardView } from './card-view';
 import { buildObservationViews } from './observation-view';
 import { buildChoiceView } from './choice-view';
@@ -92,6 +92,5 @@ function projectPlayerView(room: GameRoom, viewerId: string, effectsFor: ReturnT
     ...(locks.length ? { publicNameLocks: locks } : {}),
     ...(hostedCards.length ? { hostedCards } : {}),
     pendingChoice: buildChoiceView(room, viewerId),
-    rpsState: { status: room.rpsState.status, playedCards: Object.fromEntries(Object.entries(room.rpsState.playedCards).filter(([id, value]) => canSeeRpsPlay(room, viewerId, id) && ['rock', 'paper', 'scissors'].includes(value))) },
   };
 }

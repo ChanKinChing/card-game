@@ -45,9 +45,9 @@ describe('focused authenticated HTTP and socket boundary', { timeout: 10_000 }, 
     const socket = connect(url, { transports: ['websocket'], reconnection: false, autoConnect: false, auth: {
       protocolVersion: PROTOCOL_VERSION, token: session.token, ...(roomId ? { roomId } : {}), ...(claimedPlayerId ? { playerId: claimedPlayerId } : {}),
     } }); sockets.push(socket);
-    const view = { socket, room: undefined as PlayerView | undefined, identity: undefined as SessionInfo | undefined, seq: 0, errors: [] as string[] };
+    const view = { socket, room: undefined as PlayerView | undefined, identity: undefined as SessionInfo | undefined, lobbyRps: undefined as SnapshotMessage['lobbyRps'], seq: 0, errors: [] as string[] };
     socket.on('sessionReady', data => { view.identity = data; });
-    socket.on('roomSnapshot', ({ room, seq }) => { view.room = room; view.seq = seq; });
+    socket.on('roomSnapshot', ({ room, seq, lobbyRps }) => { view.room = room; view.seq = seq; view.lobbyRps = lobbyRps; });
     socket.on('stateDelta', (delta: ViewDelta) => { if (view.room) view.room = applyDeltaChanges(view.room, delta.changes); view.seq = delta.seq; });
     socket.on('error', ({ message }) => view.errors.push(message));
     const ready = once<SessionInfo>(socket, 'sessionReady'); socket.connect(); await ready; return view;
@@ -68,11 +68,11 @@ describe('focused authenticated HTTP and socket boundary', { timeout: 10_000 }, 
   }
   async function playTurn(a: Awaited<ReturnType<typeof client>>, b: Awaited<ReturnType<typeof client>>, roomId: string) {
     b.socket.emit('joinRoom', { protocolVersion: PROTOCOL_VERSION, roomId });
-    await vi.waitFor(() => { expect(a.room?.status).toBe('RPS'); expect(b.room?.status).toBe('RPS'); });
-    for (const view of [a, b]) {
-      const playerId = view.identity!.playerId, rock = view.room!.players[playerId].hand.find(card => card.definitionId === 'rock')!;
-      await command(view, roomId, 'rpsPlay', { cardUuid: rock.uuid });
-    }
+    await vi.waitFor(() => { expect(a.room?.player2Id).toBe(b.identity!.playerId); expect(b.room?.status).toBe('waiting'); });
+    const picked = once<SnapshotMessage>(a.socket, 'roomSnapshot');
+    a.socket.emit('submitRps', { protocolVersion: PROTOCOL_VERSION, roomId, pick: 'rock' });
+    expect((await picked).lobbyRps?.myPick).toBe('rock');
+    b.socket.emit('submitRps', { protocolVersion: PROTOCOL_VERSION, roomId, pick: 'rock' });
     await vi.waitFor(() => expect(a.room?.status).toBe('playing'));
     const actor = () => a.room!.priorityPlayerId === a.identity!.playerId ? a : b;
     for (let count = 0; count < 4; count++) await command(actor(), roomId, 'pass_priority');
@@ -90,6 +90,39 @@ describe('focused authenticated HTTP and socket boundary', { timeout: 10_000 }, 
     }
     expect(a.room!.turnNumber).toBe(initialTurn + 1);
   }
+  it('restores a locked pick on reconnect and starts both clients exactly once', async () => {
+    const session = await guest(), a = await client(session), b = await client(await guest());
+    const roomId = await create(a), request = { protocolVersion: PROTOCOL_VERSION, roomId };
+    const premature = vi.fn(); b.socket.on('startGame', premature);
+    b.socket.emit('joinRoom', request);
+    await vi.waitFor(() => expect(b.lobbyRps).toEqual({ myPick: null, opponentReady: false }));
+    a.socket.emit('submitRps', { ...request, pick: 'rock' });
+    await vi.waitFor(() => expect(b.lobbyRps).toEqual({ myPick: null, opponentReady: true }));
+    expect(premature).not.toHaveBeenCalled();
+    expect(b.room?.status).toBe('waiting');
+    expect(Object.values(b.room!.players).every(player => !player.hand.length && !player.graveyard.length)).toBe(true);
+    a.socket.disconnect();
+    const rejoined = await client(session, roomId);
+    await vi.waitFor(() => expect(rejoined.lobbyRps).toEqual({ myPick: 'rock', opponentReady: false }));
+    const results = [rejoined, b].map(view => once<{ firstPlayerId: string; picks: string[] }>(view.socket, 'startGame'));
+    b.socket.emit('submitRps', { ...request, pick: 'paper' });
+    for (const outcome of await Promise.all(results)) {
+      expect(outcome).toMatchObject({ firstPlayerId: b.identity!.playerId, picks: ['rock', 'paper'] });
+    }
+    for (const view of [rejoined, b]) {
+      expect(view.room).toMatchObject({ status: 'playing', phase: 'upkeepStep', priorityPlayerId: b.identity!.playerId, turnNumber: 1 });
+      expect(view.lobbyRps).toBeUndefined();
+      expect(view.room!.players[view.identity!.playerId].hand).toHaveLength(1);
+      expect(Object.values(view.room!.players).every(player => player.graveyard.length === 0)).toBe(true);
+    }
+    const startedRoom = application.store.getRoom(roomId);
+    const duplicate = once<{ message: string }>(b.socket, 'error');
+    b.socket.emit('submitRps', { ...request, pick: 'paper' });
+    expect((await duplicate).message).toContain('No opening round');
+    expect(premature).toHaveBeenCalledTimes(1);
+    expect(application.store.getRoom(roomId)).toBe(startedRoom);
+  });
+
   it('returns the latest room snapshot only to the requesting seat and keeps hands private', async () => {
     const a = await client(await guest()), b = await client(await guest()), outsider = await client(await guest());
     const roomId = await create(a);
@@ -98,13 +131,14 @@ describe('focused authenticated HTTP and socket boundary', { timeout: 10_000 }, 
     b.socket.emit('joinRoom', request);
     await Promise.all(joined);
     const aId = a.identity!.playerId, bId = b.identity!.playerId;
-    const rock = a.room!.players[aId].hand.find(card => card.definitionId === 'rock')!;
-    await command(a, roomId, 'rpsPlay', { cardUuid: rock.uuid });
+    const locked = once<SnapshotMessage>(a.socket, 'roomSnapshot');
+    a.socket.emit('submitRps', { ...request, pick: 'rock' });
+    expect((await locked).lobbyRps).toEqual({ myPick: 'rock', opponentReady: false });
 
     const foreignSnapshot = vi.fn();
     outsider.socket.on('roomSnapshot', foreignSnapshot);
     outsider.socket.emit('requestRoomSnapshot', request);
-    await outsider.socket.timeout(1500).emitWithAck('getOptions', { ...request, zone: 'hand', cardUuid: rock.uuid });
+    await outsider.socket.timeout(1500).emitWithAck('getOptions', { ...request, zone: 'hand', cardUuid: 'no-lobby-card' });
     expect(foreignSnapshot).not.toHaveBeenCalled();
 
     const recovered = once<SnapshotMessage>(b.socket, 'roomSnapshot');
@@ -113,7 +147,9 @@ describe('focused authenticated HTTP and socket boundary', { timeout: 10_000 }, 
     expect(snapshot.seq).toBe(a.seq);
     expect(snapshot.room.viewerId).toBe(bId);
     expect(snapshot.room.players[aId].hand).toEqual([]);
-    expect(snapshot.room.players[bId].hand.length).toBeGreaterThan(0);
+    expect(snapshot.room.players[bId].hand).toEqual([]);
+    expect(snapshot.room.players[aId].graveyard).toEqual([]);
+    expect(snapshot.lobbyRps).toEqual({ myPick: null, opponentReady: true });
   });
   it('registers, rotates on login, plays a turn, logs out and rejects the token immediately', async () => {
     const registered = await register('alice');

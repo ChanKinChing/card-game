@@ -42,12 +42,12 @@ describe('GameLogger', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const logger = new GameLogger();
     logger.debug('room:created', 'made a room', { id: 1 });
-    logger.info('rps:resolved');
+    logger.info('match:started');
     logger.warn('weird');
     logger.error('boom');
     expect(log.mock.calls.map((call) => String(call[0]))).toEqual([
       expect.stringContaining('DEBUG app room:created made a room {"id":1}'),
-      expect.stringContaining('INFO  app rps:resolved'),
+      expect.stringContaining('INFO  app match:started'),
     ]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('WARN  app weird'));
     expect(error).toHaveBeenCalledWith(expect.stringContaining('ERROR app boom'));
@@ -305,10 +305,10 @@ describe('CardCharacteristicService', () => {
 });
 
 describe('endTurnHandler', () => {
-  it('rejects RPS, a non-empty stack and non-turn players', () => {
-    expect(endTurnHandler.validate({ ...createTestRoom(), status: 'RPS' }, 'player1', {})).toMatchObject({
+  it('rejects waiting rooms, a non-empty stack and non-turn players', () => {
+    expect(endTurnHandler.validate({ ...createTestRoom(), status: 'waiting' }, 'player1', {})).toMatchObject({
       success: false,
-      reason: expect.stringContaining('Rock Paper Scissors'),
+      reason: expect.stringContaining('Match has not started'),
     });
     const stacked = createTestRoom();
     stacked.stack = [{ uuid: 'obj' } as never];

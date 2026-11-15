@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import DebugControls from '@client/components/DebugControls';
+import OpeningRound from '@client/components/OpeningRound';
 import PhaseBar from '@client/components/PhaseBar';
 import { useGameStore } from '@client/store/gameStore';
 import { createTestRoom } from '../helpers/client-view-fixture';
@@ -101,7 +102,7 @@ describe('PhaseBar debug integration', () => {
     expect(renderToStaticMarkup(createElement(PhaseBar))).not.toContain('Debug actions');
   });
 
-  it.each(['RPS', 'gameOver'] as const)('hides debug controls in %s status', (status) => {
+  it.each(['waiting', 'gameOver'] as const)('hides debug controls in %s status', (status) => {
     useGameStore.setState({ lastSeq: 0, room: createTestRoom({ status }) });
     expect(renderToStaticMarkup(createElement(PhaseBar))).not.toContain('Debug actions');
   });
@@ -152,4 +153,20 @@ describe('PhaseBar debug integration', () => {
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('Choose below to continue'); expect(html).not.toContain('Updating the board'); expect(html).not.toContain('primary-action');
   });
+});
+
+it('sends an opening pick via the lobby socket and hides buttons after it is locked', () => {
+  const previous = useGameStore.getState();
+  const emit = vi.mocked(socket.emit); emit.mockClear();
+  try {
+    useGameStore.setState({ roomId: 'room', roomSync: 'live', lobbyRps: { myPick: null, opponentReady: true } });
+    expect(renderToStaticMarkup(createElement(OpeningRound))).toContain('Opponent is ready');
+    const view = OpeningRound() as ReactElement<{ children: [unknown, ReactElement<{ onClick: () => void }>[], unknown] }>;
+    view.props.children[1][1].props.onClick();
+    expect(emit).toHaveBeenCalledExactlyOnceWith('submitRps', { protocolVersion: 1, roomId: 'room', pick: 'paper' });
+    useGameStore.setState({ lobbyRps: { myPick: 'paper', opponentReady: true } });
+    const locked = renderToStaticMarkup(createElement(OpeningRound));
+    expect(locked).toContain('Locked in: paper');
+    expect(locked).not.toContain('<button');
+  } finally { useGameStore.setState(previous); }
 });

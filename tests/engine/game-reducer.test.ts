@@ -361,24 +361,11 @@ describe('gameReducer', () => {
     });
   });
 
-  describe('RPS mutations', () => {
-    it('SET_RPS_STATUS changes rpsState.status', () => {
-      const next = gameReducer(room, { type: 'SET_RPS_STATUS', status: 'resolved' });
-      expect(next.rpsState.status).toBe('resolved');
-    });
-
-    it('SET_RPS_PLAYED_CARD records a player choice', () => {
-      const next = gameReducer(room, { type: 'SET_RPS_PLAYED_CARD', playerId: 'player1', card: 'rock' });
-      expect(next.rpsState.playedCards['player1']).toBe('rock');
-    });
-  });
-
   describe('immutability', () => {
     it('does not mutate the input state', () => {
       const snapshot = JSON.parse(JSON.stringify(room));
       gameReducer(room, { type: 'SET_LIFE', playerId: 'player1', amount: 1 });
       gameReducer(room, { type: 'SET_PHASE', phase: 'stateMainPhase' });
-      gameReducer(room, { type: 'SET_RPS_STATUS', status: 'resolved' });
       expect(room).toEqual(snapshot);
     });
 

@@ -4,7 +4,6 @@ import { type ActionResult } from '@engine/action-registry';
 import { playCardHandler } from '@engine/handlers/play-card-handler';
 import { parseCardDefinition } from '@library/card-parser';
 import { instantiateCard } from '@library/card-factory';
-import { buildStartingCardMutations, resolveRPS } from '@engine/room-factory';
 import { SyncService } from '@server/rooms/sync-service';
 import { createTestRoom, fillTestLibraries } from '../helpers/test-room-factory';
 import { creature } from '../helpers/combat-fixture';
@@ -133,11 +132,9 @@ describe('engine cleanup contracts', () => {
   });
 
   it('preserves setup snapshots when dealing and advancing into play', () => {
-    const room = createTestRoom({ status: 'RPS', rpsState: { status: 'playing', playedCards: { player1: 'rock', player2: 'scissors' } } });
+    const room = createTestRoom({ status: 'waiting' });
     const engine = engineFor(room);
-    checked(engine, () => engine.applyMutations(resolveRPS(engine.roomState)));
-    checked(engine, () => engine.applyMutations(buildStartingCardMutations(engine.roomState)));
-    checked(engine, () => engine.advancePhase('complete'));
+    checked(engine, () => { engine.startMatch('player2'); return engine.drainEventBatches().flatMap(batch => batch.mutations); });
     expect(engine.roomState.status).toBe('playing');
     expect(engine.roomState.players.player1.hand.length).toBeGreaterThan(0);
   });

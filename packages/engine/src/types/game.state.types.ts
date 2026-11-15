@@ -26,5 +26,5 @@ export const TURN_SEQUENCE = [
 export type Phase = typeof TURN_SEQUENCE[number];
 
 /** High-level game status — orthogonal to turn phase. */
-export type GameStatus = 'waiting' | 'RPS' | 'playing' | 'gameOver';
+export type GameStatus = 'waiting' | 'playing' | 'gameOver';
 

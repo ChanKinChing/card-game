@@ -1,4 +1,4 @@
-import { useGameStore, selectCurrentPhase, selectIsMyTurn, selectHasPriority, selectRpsWaitingForOpponent } from '../store/gameStore';
+import { useGameStore, selectCurrentPhase, selectIsMyTurn, selectHasPriority } from '../store/gameStore';
 import { useGameActions } from '../hooks/useGameActions';
 import { ACTION_IDS } from '@card-game/protocol';
 import { declarationPlayer, PHASE_LABELS } from '@card-game/protocol';
@@ -8,7 +8,6 @@ export default function PhaseBar() {
   const phase = useGameStore(selectCurrentPhase);
   const isMyTurn = useGameStore(selectIsMyTurn);
   const hasPriority = useGameStore(selectHasPriority);
-  const waitingForOpponent = useGameStore(selectRpsWaitingForOpponent);
   const combatSelection = useGameStore((s) => s.combatSelection);
   const clearCombatSelection = useGameStore((s) => s.clearCombatSelection);
   const { playerAction } = useGameActions();
@@ -43,7 +42,6 @@ export default function PhaseBar() {
     <div className="phase-bar">
       <p>Phase: <strong>{phaseLabel}</strong></p>
       {status === 'playing' && !outcome && <p className="action-owner" role="status">{prompt}</p>}
-      {waitingForOpponent && <p className="rps-waiting">Waiting for opponent…</p>}
       {status === 'playing' && (
         <div className="phase-actions">
           {/* Declare Attackers: active player decision, before the response window.

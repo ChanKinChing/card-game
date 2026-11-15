@@ -80,6 +80,6 @@ export interface PlayerView extends Versioned {
   turnHistory: { landPlays: Record<string, number> };
   stack: StackView[]; battlefield: CardView[]; combat: CombatView[];
   combatDeclarations?: { attackers: boolean; blockers: boolean }; combatDamage?: { completed: boolean } | null;
-  pendingChoice: ChoiceView | null; rpsState: { status: string; playedCards: Record<string, string> };
+  pendingChoice: ChoiceView | null;
 }
 export type { CardZone };

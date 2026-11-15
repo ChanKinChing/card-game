@@ -9,7 +9,6 @@ import { passPriorityHandler } from './handlers/pass-priority-handler';
 import { playCardHandler } from './handlers/play-card-handler';
 import { playLandHandler } from './handlers/play-land-handler';
 import { resolveStackHandler } from './handlers/resolve-stack-handler';
-import { rpsPlayHandler } from './handlers/rps-play-handler';
 import { tapForManaHandler } from './handlers/tap-for-mana-handler';
 
 /**
@@ -27,7 +26,6 @@ const DEFAULT_ACTION_HANDLERS: Record<Exclude<ActionId, typeof ACTION_IDS.choose
   [ACTION_IDS.endTurn]: endTurnHandler,
   [ACTION_IDS.passPriority]: passPriorityHandler,
   [ACTION_IDS.resolveStack]: resolveStackHandler,
-  [ACTION_IDS.rpsPlay]: rpsPlayHandler,
 };
 
 /** Build a registry pre-populated with every built-in action handler. */

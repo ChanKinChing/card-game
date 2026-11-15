@@ -19,7 +19,6 @@ import {
   selectOpponentBattlefield,
   selectOpponentHandCount,
   selectOpponentId,
-  selectRpsWaitingForOpponent,
   selectTargeting,
   useGameStore,
   type TargetingState,
@@ -532,7 +531,6 @@ describe('derived selectors', () => {
     expect(selectOpponentHandCount(state)).toBe(0);
     expect(selectIsMyTurn(state)).toBe(false);
     expect(selectCurrentPhase(state)).toBeNull();
-    expect(selectRpsWaitingForOpponent(state)).toBe(false);
     expect(selectHasPriority(state)).toBe(false);
     expect(selectTargeting(state)).toBeNull();
   });
@@ -571,30 +569,8 @@ describe('derived selectors', () => {
     useGameStore.setState({ room: noOpponent, myPlayerId: 'player1' });
     expect(selectOpponentId(useGameStore.getState())).toBeNull();
     expect(selectOpponentHandCount(useGameStore.getState())).toBe(0);
-    expect(selectRpsWaitingForOpponent(useGameStore.getState())).toBe(false);
   });
 
-  it('reports only a waiting rock-paper-scissors round', () => {
-    const base = createTestRoom({ status: 'RPS' });
-    const choosing = { ...base, rpsState: { status: 'choosing', playedCards: { player1: 'rock' } } } as PlayerView;
-    useGameStore.setState({ room: choosing, myPlayerId: 'player1' });
-    expect(selectRpsWaitingForOpponent(useGameStore.getState())).toBe(true);
-
-    const answered = { ...choosing, rpsState: { status: 'choosing', playedCards: { player1: 'rock', player2: 'scissors' } } } as PlayerView;
-    useGameStore.setState({ room: answered });
-    expect(selectRpsWaitingForOpponent(useGameStore.getState())).toBe(false);
-
-    const undecided = { ...choosing, rpsState: { status: 'choosing', playedCards: {} } } as PlayerView;
-    useGameStore.setState({ room: undecided });
-    expect(selectRpsWaitingForOpponent(useGameStore.getState())).toBe(false);
-
-    const emptySeat = { ...choosing, player2Id: null } as PlayerView;
-    useGameStore.setState({ room: emptySeat, myPlayerId: 'player1' });
-    expect(selectRpsWaitingForOpponent(useGameStore.getState())).toBe(false);
-
-    useGameStore.setState({ room: createTestRoom({ status: 'playing' }), myPlayerId: 'player1' });
-    expect(selectRpsWaitingForOpponent(useGameStore.getState())).toBe(false);
-  });
 
   it('reports priority only while the engine waits for this player without a pending choice', () => {
     useGameStore.setState({ room: createTestRoom({ priorityPlayerId: 'player1', engineState: 'waiting_for_player' }), myPlayerId: 'player1' });

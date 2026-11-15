@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { AutoPassCoordinator } from './auto-pass';
 import { hasLegalNonPassAction } from '@card-game/engine/engine/legal-actions';
-import type { AutoPassStatus } from '@card-game/protocol';
+import type { AutoPassStatus, LobbyRpsView, RpsPick } from '@card-game/protocol';
 import { gameConfig } from '@card-game/engine/config';
 import { GameEngine } from '@card-game/engine/engine/game-engine';
 import { OptionService, type ActionOption } from '@card-game/engine/engine/option-service';
-import { buildStartingCardMutations, createRoom, joinRoom, resolveRPS, setupRPS } from '@card-game/engine/engine/room-factory';
+import { createRoom, joinRoom } from '@card-game/engine/engine/room-factory';
 import { ACTION_IDS } from '@card-game/engine/types/action.ids';
 import type { AppliedEventBatch } from '@card-game/engine/types/game-event.types';
 import type { GameMutation } from '@card-game/engine/types/game-mutation.types';
@@ -59,9 +59,15 @@ export type JoinRoomResult =
 
 export type PlayerActionRuntimeResult =
   | { kind: 'error'; message: string; commandId: string; action: string }
-  | { kind: 'success'; commandId: string; action: string; snapshot?: GameRoom };
+  | { kind: 'success'; commandId: string; action: string };
+
+type RpsResult = { kind: 'error'; message: string } | { kind: 'pending'; room: GameRoom }
+  | { kind: 'started'; room: GameRoom; firstPlayerId: PlayerId; picks: readonly [RpsPick, RpsPick] };
+
+const beats: Record<RpsPick, RpsPick> = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
 
 export class RoomRuntime {
+  private readonly lobbyPicks = new Map<string, Map<PlayerId, RpsPick>>();
   private readonly autoPass: AutoPassCoordinator;
   private readonly labContexts = new Map<string, RuntimeContext>();
   private readonly engines = new Map<string, GameEngine>();
@@ -179,21 +185,43 @@ export class RoomRuntime {
     joinRoom(room, playerId, cards);
     this.store.saveRoom(room);
 
-    const engine = this.replaceRoomEngine(room);
-    serverLogger.info('room:joined', `${playerId} joined room: ${roomId}`, { roomId, playerId });
+    this.replaceRoomEngine(room);
+    this.lobbyPicks.set(roomId, new Map());
+    serverLogger.info('room:joined', 'Second player seated; opening picks enabled', { roomId, playerId });
+    return { kind: 'joined', roomId, playerId, room };
+  }
 
-    setupRPS(room, this.runtimeContext);
-    engine.applyMutations([{ type: 'SET_STATUS', status: 'RPS' }]);
+  lobbyView(roomId: string, viewerId: PlayerId): LobbyRpsView | undefined {
+    const room = this.store.getRoom(roomId), picks = this.lobbyPicks.get(roomId);
+    if (!picks || room?.status !== 'waiting' || !room.player2Id ||
+        (viewerId !== room.player1Id && viewerId !== room.player2Id)) return;
+    const opponent = viewerId === room.player1Id ? room.player2Id : room.player1Id;
+    return { myPick: picks.get(viewerId) ?? null, opponentReady: picks.has(opponent) };
+  }
+
+  submitRps(socketId: string, roomId: string, pick: RpsPick): RpsResult {
+    const playerId = resolvePlayerId(this.identity, socketId);
+    const room = this.store.getRoom(roomId), picks = this.lobbyPicks.get(roomId);
+    if (this.socketRooms.get(socketId) !== roomId || !room?.player2Id || !picks || !this.lobbyView(roomId, playerId)) {
+      return { kind: 'error', message: 'No opening round for this seat' };
+    }
+    if (picks.has(playerId)) return { kind: 'error', message: 'Opening pick already locked' };
+    const first = playerId === room.player1Id ? pick : picks.get(room.player1Id);
+    const second = playerId === room.player2Id ? pick : picks.get(room.player2Id);
+    if (!first || !second) {
+      picks.set(playerId, pick);
+      return { kind: 'pending', room };
+    }
+    const firstPlayerId = first === second || beats[first] === second ? room.player1Id : room.player2Id;
+    const engine = this.getOrCreateEngine(roomId);
+    engine.startMatch(firstPlayerId);
+    this.lobbyPicks.delete(roomId);
+    const started = engine.roomState;
+    this.store.saveRoom(started);
     engine.drainEventBatches();
-    const rpsRoom = engine.roomState;
-    this.store.saveRoom(rpsRoom);
-    serverLogger.info('rps:started', `RPS phase started in room ${roomId}`, {
-      roomId,
-      p1Hand: rpsRoom.players[rpsRoom.player1Id].hand.map(card => card.blueprint.id),
-      p2Hand: rpsRoom.players[playerId].hand.map(card => card.blueprint.id),
-    });
+    serverLogger.info('match:started', 'Opening round resolved', { roomId, firstPlayerId, picks: [first, second] });
     this.autoPass.refresh(roomId);
-    return { kind: 'joined', roomId, playerId, room: rpsRoom };
+    return { kind: 'started', room: started, firstPlayerId, picks: [first, second] };
   }
 
   getOptions(socketId: string, roomId: string, cardUuid: string, zone: 'hand' | 'battlefield'): ActionOption[] {
@@ -228,21 +256,7 @@ export class RoomRuntime {
         kind: 'error', message: result.reason, commandId, action: packet.actionId,
       } as const;
 
-      const mutations = [...(result.mutations ?? [])];
-      let rpsResolved = false;
-      const chosen = engine.roomState;
-      if (packet.actionId === ACTION_IDS.rpsPlay && chosen.status === 'RPS' && chosen.player2Id &&
-          chosen.rpsState.playedCards[chosen.player1Id] && chosen.rpsState.playedCards[chosen.player2Id]) {
-        mutations.push(...engine.applyMutations(resolveRPS(chosen)));
-        mutations.push(...engine.applyMutations(buildStartingCardMutations(engine.roomState, this.runtimeContext)));
-        mutations.push(...engine.advancePhase('complete'));
-        rpsResolved = true;
-        serverLogger.info('rps:resolved', `RPS resolved; first player ${engine.activeTurnPlayerId}`, {
-          roomId: packet.roomId,
-          winner: engine.activeTurnPlayerId,
-        });
-      }
-
+      const mutations = result.mutations ?? [];
       const currentRoom = engine.roomState;
       this.store.saveRoom(currentRoom);
       const batches = engine.drainEventBatches();
@@ -260,7 +274,6 @@ export class RoomRuntime {
         kind: 'success',
         commandId,
         action: packet.actionId,
-        ...(rpsResolved ? { snapshot: currentRoom } : {}),
       } as const;
     }, commandId);
   }
@@ -280,7 +293,11 @@ export class RoomRuntime {
     const playerId = resolvePlayerId(this.identity, socketId);
     let room = this.store.getRoom(roomId);
     if (!room) return;
-    if (room.player2Id && (room.status === 'playing' || room.status === 'RPS')) {
+    if (room.status === 'waiting') {
+      this.destroyRoom(roomId);
+      return { playerId };
+    }
+    if (room.player2Id && room.status === 'playing') {
       const result = this.executePlayerAction(socketId, { roomId, actionId: ACTION_IDS.concede, data: {} });
       if (result.kind !== 'success') return;
       room = this.store.getRoom(roomId)!;
@@ -322,6 +339,7 @@ export class RoomRuntime {
     for (const engine of this.engines.values()) engine.dispose();
     this.engines.clear();
     this.labContexts.clear();
+    this.lobbyPicks.clear();
     this.departed.clear();
     this.socketRooms.clear();
     this.identity.playerIdBySocket.clear();
@@ -371,6 +389,7 @@ export class RoomRuntime {
     engine.dispose();
     this.engines.delete(roomId);
     this.labContexts.delete(roomId);
+    this.lobbyPicks.delete(roomId);
     this.store.deleteRoom(roomId);
     if (!room) return;
 

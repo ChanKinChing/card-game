@@ -141,15 +141,5 @@ export const playerCommands: Record<string, PlayerCommand> = {
       ? reject('Cannot end turn while the stack is not empty!')
       : { success: true, mutations: engine.advancePhase('skipToEnd') },
   },
-
-  [ACTION_IDS.rpsPlay]: {
-    status: 'RPS',
-    validate: noFields,
-    execute: (engine, playerId, data) => {
-      const result = engine.handleAction(playerId, ACTION_IDS.rpsPlay, data);
-
-      return result.success ? { ...result, mutations: engine.applyMutations(result.mutations ?? []) } : result;
-    },
-  },
 };
 

@@ -33,7 +33,7 @@ describe('actual server routing', { timeout: 15_000 }, () => {
   const clients: Socket[] = [];
   const initialized: GameEngine[] = [];
   const observed = new Map<string, GameEngine>();
-  const committedRpsSnapshots: { roomId: string; before: GameRoom; after: GameRoom; beforeJson: string; afterJson: string }[] = [];
+  const committedStartSnapshots: { roomId: string; before: GameRoom; after: GameRoom; beforeJson: string; afterJson: string }[] = [];
   const roomTimers: ReturnType<typeof setTimeout>[] = [];
   const originalPort = process.env.PORT;
   const originalLogPath = process.env.DELTA_LOG_PATH;
@@ -51,7 +51,7 @@ describe('actual server routing', { timeout: 15_000 }, () => {
       if (context && event.eventId === 'MUTATION_APPLIED' && event.payload.mutation &&
           (event.payload.mutation as { type: string; status?: string }).type === 'SET_STATUS' &&
           (event.payload.mutation as { status?: string }).status === 'playing') {
-        committedRpsSnapshots.push({ roomId: event.roomId, before: context.before, after: context.after,
+        committedStartSnapshots.push({ roomId: event.roomId, before: context.before, after: context.after,
           beforeJson: JSON.stringify(context.before), afterJson: JSON.stringify(context.after) });
       }
       return emit.call(this, event, context);
@@ -63,7 +63,7 @@ describe('actual server routing', { timeout: 15_000 }, () => {
       init.call(this);
     });
     // A call-through observation is the only fixture seam: retain the real
-    // engine used by the real RPS route and edit its authoritative room data.
+    // engine used by the real opening route and edit its authoritative room data.
     const handle = GameEngine.prototype.handleAction;
     vi.spyOn(GameEngine.prototype, 'handleAction').mockImplementation(function (this: GameEngine, ...args) {
       observed.set(this.roomState.roomId, this);
@@ -131,9 +131,9 @@ describe('actual server routing', { timeout: 15_000 }, () => {
     }
     const socket = connect(url, { auth: { protocolVersion: 1, token: credential.token, playerId, roomId }, transports: ['websocket'], autoConnect: false, reconnection: false });
     clients.push(socket);
-    const view = { socket, playerId: credential.playerId, room: undefined as PlayerView | undefined, deltas: [] as ViewDelta[], errors: [] as string[], packets: [] as { event: string; data: unknown }[] };
+    const view = { socket, playerId: credential.playerId, room: undefined as PlayerView | undefined, lobbyRps: undefined as {myPick: string | null; opponentReady: boolean} | undefined, deltas: [] as ViewDelta[], errors: [] as string[], packets: [] as { event: string; data: unknown }[] };
     socket.onAny((event, data) => view.packets.push({ event, data }));
-    socket.on('roomSnapshot', ({ room }) => { view.room = room; });
+    socket.on('roomSnapshot', ({ room, lobbyRps }) => { view.room = room; view.lobbyRps = lobbyRps; });
     socket.on('stateDelta', (delta: ViewDelta) => {
       view.deltas.push(delta);
       if (view.room) view.room = applyDeltaChanges(view.room, delta.changes);
@@ -158,16 +158,13 @@ describe('actual server routing', { timeout: 15_000 }, () => {
     if (useFixture) oldEngine.roomState.players[a.playerId].life = 17;
     b.socket.emit('joinRoom', { protocolVersion: 1, roomId });
     await vi.waitFor(() => {
-      expect(a.room?.status).toBe('RPS');
-      expect(b.room?.status).toBe('RPS');
+      expect(a.lobbyRps).toBeDefined();
+      expect(b.lobbyRps).toBeDefined();
     }, { timeout: 2500 });
     expect(a.room!.players[a.playerId].life).toBe(useFixture ? 17 : 20);
-    for (const view of [a, b]) {
-      const pid = view.playerId;
-      const rock = view.room!.players[pid].hand.find(card => card.definitionId === 'rock')!;
-      view.socket.emit('playerAction', { protocolVersion: 1, roomId, actionId: 'rpsPlay', cardUuid: rock.uuid });
-      if (view === a) await vi.waitFor(() => expect(a.room!.rpsState.playedCards[pid]).toBe('rock'), { timeout: 2500 });
-    }
+    a.socket.emit('submitRps', { protocolVersion: 1, roomId, pick: 'rock' });
+    await vi.waitFor(() => expect(a.lobbyRps?.myPick).toBe('rock'), { timeout: 2500 });
+    b.socket.emit('submitRps', { protocolVersion: 1, roomId, pick: 'rock' });
     await vi.waitFor(() => {
       expect(a.room?.status).toBe('playing');
       expect(b.room?.phase).toBe('upkeepStep');
@@ -177,10 +174,10 @@ describe('actual server routing', { timeout: 15_000 }, () => {
       await action({ a, b, roomId } as Match, b, 'pass_priority');
     }
     expect(b.room?.phase).toBe('stateMainPhase');
-    const rpsBatch = committedRpsSnapshots.find(snapshot => snapshot.roomId === roomId)!;
-    expect(rpsBatch).toBeDefined();
-    expect(JSON.stringify(rpsBatch.before)).toBe(rpsBatch.beforeJson);
-    expect(JSON.stringify(rpsBatch.after)).toBe(rpsBatch.afterJson);
+    const startBatch = committedStartSnapshots.find(snapshot => snapshot.roomId === roomId)!;
+    expect(startBatch).toBeDefined();
+    expect(JSON.stringify(startBatch.before)).toBe(startBatch.beforeJson);
+    expect(JSON.stringify(startBatch.after)).toBe(startBatch.afterJson);
     // Fixtures that use development shortcuts choose their mode explicitly.
     if (useFixture) observed.get(roomId)!.roomState.debugMode = 'flow';
     expect(a.room!.activeTurnPlayerId).toBe(a.playerId);
@@ -970,7 +967,7 @@ describe('actual server routing', { timeout: 15_000 }, () => {
     expect(disposeSpy.mock.contexts.filter(engine => engine === m.oldEngine)).toHaveLength(1);
     emitEnter(m.oldEngine);
     expect(m.oldEngine.mutationCollector).toEqual([]);
-    expect(m.a.room!.rpsState.status).toBe('resolved');
+    expect(m.a.lobbyRps).toBeUndefined();
     expect(m.b.room!.players[m.p1].life).toBe(17);
   });
 
@@ -1136,7 +1133,7 @@ describe('actual server routing', { timeout: 15_000 }, () => {
     expect(publicState(m.a.room!)).toEqual(publicState(m.b.room!));
     const final = structuredClone(publicState(m.a.room!));
     const count = m.a.deltas.length;
-    for (const actionId of ['end_turn', 'resolve_stack', 'pass_priority', 'cast_spell', 'rpsPlay', 'declare_attackers']) {
+    for (const actionId of ['end_turn', 'resolve_stack', 'pass_priority', 'cast_spell', 'declare_attackers']) {
       const rejected = once<{ message: string }>(m.a.socket, 'error');
       m.a.socket.emit('playerAction', { protocolVersion: 1, roomId: m.roomId, actionId });
       expect(await rejected).toMatchObject({ message: 'Game is over', action: actionId, commandId: expect.any(String) });

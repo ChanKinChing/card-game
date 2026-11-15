@@ -18,7 +18,7 @@ import {
 import { clearCardResults, probeCardResult, settleCardResult } from '@engine/resolution-results';
 import { buildScenarioRoom, scenarioRandom } from '@engine/scenario-setup';
 import {
-  buildStartingCardMutations, createRoom, dealStartingHands, joinRoom, setupRPS,
+  buildStartingCardMutations, createRoom, dealStartingHands, joinRoom,
 } from '@engine/room-factory';
 import { planDamageResults } from '@engine/damage-keywords';
 import { declareBlockersHandler } from '@engine/handlers/declare-blockers-handler';
@@ -483,7 +483,7 @@ describe('scenario room setup', () => {
         {
           life: 13,
           library: [{ cardId: 'empire-servant', quantity: 2 }, { cardId: 'land-red', quantity: 1 }],
-          libraryOrder: ['rock', 'paper', 'scissors'],
+          libraryOrder: ['empire-servant', 'red-wolf', 'land-red'],
           hand: [{ cardId: 'land-red', quantity: 1 }],
           graveyard: [{ cardId: 'empire-servant', quantity: 1 }],
           battlefield: [{ cardId: 'empire-servant', quantity: 1 }],
@@ -510,8 +510,8 @@ describe('scenario room setup', () => {
     expect(room.status).toBe('playing');
     expect(room.activeTurnPlayerId).toBe('p2');
     expect(room.players.p1.life).toBe(13);
-    expect(room.players.p1.deck.map((card) => card.blueprint.id)).toEqual(['scissors', 'paper']);
-    expect(room.players.p1.hand.map((card) => card.blueprint.id)).toEqual(['land-red', 'rock']);
+    expect(room.players.p1.deck.map((card) => card.blueprint.id)).toEqual(['land-red', 'red-wolf']);
+    expect(room.players.p1.hand.map((card) => card.blueprint.id)).toEqual(['land-red', 'empire-servant']);
     expect(room.players.p1.graveyard.map((card) => card.blueprint.id)).toEqual(['empire-servant']);
     expect(room.players.p2.deck.filter((card) => card.state.zone === 'library')).toHaveLength(2);
     expect(room.players.p2.hand.map((card) => card.blueprint.id)).toEqual(['empire-servant']);
@@ -567,8 +567,6 @@ describe('room factory branches', () => {
 
   it('returns early when a second seat is missing', () => {
     const room = createRoom('empty-seat', 'p1');
-    setupRPS(room);
-    expect(room.status).toBe('RPS');
     expect(room.players.p1.hand).toHaveLength(0);
     dealStartingHands(room);
     expect(room.players.p1.hand).toHaveLength(0);
@@ -578,7 +576,7 @@ describe('room factory branches', () => {
   it('builds starting zones from pinned decks or the configured deck', () => {
     const room = createRoom('deal', 'p1');
     joinRoom(room, 'p2');
-    room.setup = { ...room.setup!, playerDecks: { p1: ['empire-servant', 'land-red'], p2: ['rock', 'paper'] } };
+    room.setup = { ...room.setup!, playerDecks: { p1: ['empire-servant', 'land-red'], p2: ['empire-servant', 'red-wolf'] } };
     const pinned = buildStartingCardMutations(room);
     expect(pinned.map((mutation) => mutation.type)).toEqual(['SET_PLAYER_ZONES', 'SET_PLAYER_ZONES']);
     delete room.setup?.playerDecks;
@@ -714,18 +712,15 @@ describe('player command validation', () => {
     });
     const result = playerCommands.enter_battle.execute(engine, 'player1', {});
     expect(result).toEqual({ success: false, phase: 'validate', reason: 'Not your priority!' });
-    const rps = playerCommands.rpsPlay.execute(engine, 'player1', {});
-    expect(rps).toEqual({ success: true, mutations: [] });
-    expect(engine.applyMutations).toHaveBeenCalledWith([]);
   });
 
   it('returns handler validation failures from enter battle', () => {
-    const room = createTestRoom({ status: 'RPS' });
+    const room = createTestRoom({ status: 'waiting' });
     const engine = {
       roomState: room, priorityPlayerId: 'player1', passPriority: vi.fn(),
     } as unknown as GameEngine;
     expect(playerCommands.enter_battle.execute(engine, 'player1', {})).toEqual({
-      success: false, phase: 'validate', reason: 'Cannot enter battle during Rock Paper Scissors phase!',
+      success: false, phase: 'validate', reason: 'Match has not started or is already over',
     });
   });
 });

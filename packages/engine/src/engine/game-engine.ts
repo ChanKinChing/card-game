@@ -16,6 +16,7 @@ import type { GameRoom, PlayerId } from '../types/game.room.types';
 import { declarationPlayer } from '../shared/turn-utils';
 import { TURN_SEQUENCE, type Phase } from '../types/game.state.types';
 import { gameConfig } from '../config';
+import { buildStartingCardMutations } from './room-factory';
 import { playerCommands, validateActionData } from './player-commands';
 import type { AppliedEventBatch, BatchCause, CommandContext, ResolutionReport } from '../types/game-event.types';
 import { engineLogger } from '../shared/game-logger';
@@ -231,7 +232,7 @@ export class GameEngine {
     });
   }
 
-  /** Include host-side command continuations (currently RPS setup) in the same timeline. */
+  /** Include host-side operations in the same command timeline. */
   withCommandContext<T>(action: string, playerId: PlayerId, operation: () => T, commandId?: string): T {
     const previous = this.commandContext;
 
@@ -272,7 +273,7 @@ export class GameEngine {
     // Concession is a match-level decision and never requires priority or a choice answer.
     if (actionId === 'concede') {
       const opponent = playerId === this.room.player1Id ? this.room.player2Id : this.room.player1Id;
-      if (!opponent || !['playing', 'RPS'].includes(this.room.status)) return reject('No active opponent to concede to');
+      if (!opponent || this.room.status !== 'playing') return reject('No active opponent to concede to');
       const outcome = { type: 'win' as const, winnerId: opponent,
         losses: [{ playerId, reason: 'concede' as const }] };
       return { success: true, mutations: this.applyMutations([{ type: 'END_GAME', outcome }]) };
@@ -510,6 +511,22 @@ export class GameEngine {
     }
 
     return mutations;
+  }
+
+  /** Start a fresh two-seat match with the caller's chosen first player. */
+  startMatch(firstPlayerId: PlayerId): void {
+    const room = this.room;
+    if (room.status !== 'waiting' || !room.player2Id ||
+        (firstPlayerId !== room.player1Id && firstPlayerId !== room.player2Id)) {
+      throw new Error('Cannot start match with this first player');
+    }
+    this.applyMutations([
+      ...buildStartingCardMutations(room, this.runtimeContext),
+      { type: 'SET_TURN', playerId: firstPlayerId },
+      { type: 'SET_PHASE', phase: 'stateTurnStart' },
+      { type: 'SET_STATUS', status: 'playing' },
+    ]);
+    this.advancePhase('complete');
   }
 
   /** Advance one committed step at a time, stopping for live stack/input/terminal state. */

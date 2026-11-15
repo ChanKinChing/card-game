@@ -157,7 +157,7 @@ pass again. Repeat until the phase label changes.
 ## Capturing server logs
 
 The server logs to its terminal. After an action, read the terminal output to
-confirm the event reached the server (e.g. `phase:advance`, `rps:played`). If no
+confirm the event reached the server (e.g. `phase:advance`, `match:started`). If no
 log appears, the emit never reached the server — check the client error banner
 (`document.body.innerText` will contain the server error message).
 

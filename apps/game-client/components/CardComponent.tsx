@@ -84,10 +84,8 @@ export default function CardComponent({ card, zone }: CardComponentProps) {
     }
 
     // Simple click: if in hand, play the card
-    if (zone === 'hand') {
-      if (status === 'RPS') {
-        playerAction(ACTION_IDS.rpsPlay, card.uuid);
-      } else if (card.cardTypes.includes('Land')) {
+    if (zone === 'hand' && status === 'playing') {
+      if (card.cardTypes.includes('Land')) {
         playerAction(ACTION_IDS.playLand, card.uuid, undefined, { zoneRevision: card.state.zoneRevision ?? 0 });
       } else {
         const targetingState = createTargetingState(card, zone, ACTION_IDS.castSpell, undefined, room ?? undefined);

@@ -102,8 +102,4 @@ type GameMutationBody =
   | { type: 'SET_ENGINE_STATE'; state: GameRoom['engineState'] }
   | { type: 'SET_TURN'; playerId: PlayerId; advance?: boolean }
   | { type: 'SET_PRIORITY'; playerId: PlayerId | null }
-  | { type: 'SET_LAST_PASSED'; playerId: PlayerId | null }
-
-  // RPS mini-game mutations
-  | { type: 'SET_RPS_STATUS'; status: string }
-  | { type: 'SET_RPS_PLAYED_CARD'; playerId: PlayerId; card: string };
+  | { type: 'SET_LAST_PASSED'; playerId: PlayerId | null };

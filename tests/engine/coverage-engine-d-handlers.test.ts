@@ -1,7 +1,6 @@
 ﻿import { describe, expect, it } from 'vitest';
 import { passPriorityHandler } from '@engine/handlers/pass-priority-handler';
 import { playLandHandler, validateLandPlay } from '@engine/handlers/play-land-handler';
-import { rpsPlayHandler } from '@engine/handlers/rps-play-handler';
 import { instantiateCard } from '@library/card-factory';
 import { createTestRoom } from '../helpers/test-room-factory';
 import type { GameRoom } from '@shared/game.room.types';
@@ -96,21 +95,5 @@ describe('play land handler', () => {
       phase: 'validate',
       reason: 'Wait for the current action to finish',
     });
-  });
-});
-
-describe('RPS play handler', () => {
-  it('reports a card that left the hand between validation and proposal', () => {
-    const room = createTestRoom({ status: 'RPS', rpsState: { status: 'pending', playedCards: {} } });
-    expect(rpsPlayHandler.propose(room, 'player1', { cardUuid: 'gone' })).toEqual({
-      success: false,
-      phase: 'propose',
-      reason: 'Card not in hand',
-    });
-  });
-
-  it('resolves without further mutations once the card has been committed', () => {
-    const room = createTestRoom({ status: 'RPS', rpsState: { status: 'pending', playedCards: {} } });
-    expect(rpsPlayHandler.resolve(room, stackObject)).toEqual({ success: true });
   });
 });
