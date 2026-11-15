@@ -861,10 +861,29 @@ body {
   background: #0c1712;
   box-shadow: 0 24px 48px -24px #000;
   color: var(--parchment-dim);
+  /* The <details> panel fades instead of snapping. `display` and `content-visibility` are
+     animated discretely so the closing frame stays painted for the full 160ms; engines
+     without `allow-discrete` simply keep the older instant behaviour. */
+  opacity: 0;
+  transition: opacity 160ms ease, display 160ms allow-discrete, content-visibility 160ms allow-discrete;
+}
+
+.workspace-header .workspace-account[open] .workspace-account-panel {
+  opacity: 1;
+}
+
+@starting-style {
+  .workspace-header .workspace-account[open] .workspace-account-panel {
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-header a {
+    transition: none;
+  }
+
+  .workspace-header .workspace-account-panel {
     transition: none;
   }
 }

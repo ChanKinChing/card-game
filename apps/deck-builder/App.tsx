@@ -31,12 +31,19 @@ export default function App() {
   const [platform, setPlatform] = useState<PlatformInfo | null>(null);
   const [draft, setDraft] = useState<DeckInput>(() => readDraft(tabStorage()));
   const [saved, setSaved] = useState<SavedDeck | null>(null), [decks, setDecks] = useState<SavedDeck[]>([]);
+  /* The saved deck whose cards the catalogue is previewing; null = the normal full list. */
+  const [previewDeck, setPreviewDeck] = useState<SavedDeck | null>(null);
   const [cards, setCards] = useState<CatalogCard[]>([]), [catalogReady, setCatalogReady] = useState(false);
   const [catalogError, setCatalogError] = useState(''), [catalogRevision, setCatalogRevision] = useState(0);
   const [listBusy, setListBusy] = useState(false), [listRevision, setListRevision] = useState(0);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [storageWarning, setStorageWarning] = useState(false);
   const [tab, setTab] = useState<'create' | 'saved' | 'transfer'>('create');
+  /* Leaving My Decks drops the preview, so the catalogue is always back to all cards when
+     the player works in Create or Import/Export. */
+  useEffect(() => {
+    if (tab !== 'saved') setPreviewDeck(null);
+  }, [tab]);
   const [detail, setDetail] = useState<{ card: CatalogCard; rect: DOMRect } | null>(null);
   const [username, setUsername] = useState(''), [password, setPassword] = useState('');
   const [text, setText] = useState('');
@@ -151,7 +158,9 @@ export default function App() {
     {storageWarning && <p role="status">Draft recovery is unavailable in this browser. Export your work before leaving.</p>}
     <div className="workbench">
       <section className="catalog" aria-label="Card catalog">
-        <h2>Card catalog <small>{filtered.length} results</small></h2>
+        {previewDeck
+          ? <h2>Deck: {previewDeck.name} <small>{previewDeck.cards.reduce((total, entry) => total + entry.quantity, 0)} cards</small> <button type="button" className="catalog-show-all" onClick={() => setPreviewDeck(null)}>Show all</button></h2>
+          : <h2>Card catalog <small>{filtered.length} results</small></h2>}
         <div className="filters">
           <label>Search <input type="search" placeholder="Name, rules, or card ID" value={filter.search} onChange={event => setFilter({ ...filter, search: event.target.value })} /></label>
           <label>Type <select value={filter.type} onChange={event => setFilter({ ...filter, type: event.target.value })}><option value="">All types</option>{[...new Set(cards.flatMap(card => card.cardTypes))].sort().map(type => <option key={type}>{type}</option>)}</select></label>
@@ -164,14 +173,34 @@ export default function App() {
           </div>
           <div data-page-stage data-entered={entered}>
             {catalogError ? <p role="alert">{catalogError} <button onClick={() => setCatalogRevision(value => value + 1)}>Retry catalog</button></p> : !catalogReady ? entered && <p role="status">Loading catalog…</p> : !filtered.length ? <p>No cards match these filters.</p> : null}
-            <div className="catalog-grid">{filtered.map((card, index) => <CatalogTile key={card.id} index={index} id={card.id} description={card.rulesText || 'No rules text.'} onClick={(event) => {
-          if ((event.target as Element).closest('button')) return;
-          setDetail({ card, rect: event.currentTarget.getBoundingClientRect() });
-        }} action={
-          <button disabled={locked || !catalogReady || !card.deckLegal || deckCount(draft) >= DECK_RULES.maxCards || (draft.cards.find(entry => entry.cardId === card.id)?.quantity ?? 0) >= (card.copyLimit ?? DECK_RULES.maxCards)} onClick={() => edit(changeCopies(draft, card.id, 1))} aria-label={`Add ${card.name}${card.deckLegal && card.copyLimit !== null ? ` (max ${card.copyLimit})` : ''}`} title={card.deckLegal ? undefined : 'Not legal in saved decks'}>+ Add{card.deckLegal && card.copyLimit !== null ? ` (Max ${card.copyLimit})` : ''}</button>
-        }>
-          <CardSurface card={card} art={cardArt(card.id)} />
-        </CatalogTile>)}</div>
+            <div className="catalog-grid">{previewDeck ? previewDeck.cards.map((entry, index) => {
+              const card = catalog.get(entry.cardId);
+              /* Read-only preview: inert actions, a missing id still gets a tile so the
+                 card count matches the saved deck. */
+              return <CatalogTile key={entry.cardId} index={index} count={entry.quantity} id={entry.cardId} description={card ? (card.rulesText || 'No rules text.') : 'This card is not in the current catalog.'} onClick={card ? ((event) => {
+                if ((event.target as Element).closest('button')) return;
+                setDetail({ card, rect: event.currentTarget.getBoundingClientRect() });
+              }) : undefined} action={<button disabled>{card ? 'In deck' : 'Missing'}</button>}>
+                {card ? <CardSurface card={card} art={cardArt(card.id)} /> : <div className="tile-missing" aria-hidden="true" />}
+              </CatalogTile>;
+            }) : filtered.map((card, index) => {
+              const quantity = draft.cards.find(entry => entry.cardId === card.id)?.quantity ?? 0;
+              /* What is still addable: copies left under this card's limit, capped by the
+                 room left in the deck as a whole. Recomputed on every render, so the number
+                 follows each add/remove immediately. */
+              const remaining = Math.min(
+                (card.copyLimit ?? DECK_RULES.maxCards) - quantity,
+                DECK_RULES.maxCards - deckCount(draft),
+              );
+              return <CatalogTile key={card.id} index={index} selected={quantity > 0} id={card.id} description={card.rulesText || 'No rules text.'} onClick={(event) => {
+                if ((event.target as Element).closest('button')) return;
+                setDetail({ card, rect: event.currentTarget.getBoundingClientRect() });
+              }} action={
+                <button disabled={locked || !catalogReady || !card.deckLegal || remaining <= 0} onClick={() => edit(changeCopies(draft, card.id, 1))} aria-label={`Add ${card.name} (${Math.max(0, remaining)} left)`} title={card.deckLegal ? undefined : 'Not legal in saved decks'}>{remaining <= 0 ? 'Full' : `+ Add (${remaining})`}</button>
+              }>
+                <CardSurface card={card} art={cardArt(card.id)} />
+              </CatalogTile>;
+            })}</div>
           </div>
         </div>
       </section>
@@ -214,11 +243,13 @@ export default function App() {
                 <button type="button" onClick={() => setTab('create')}>Create a deck</button>
               </div> : <ul className="saved-decks">{decks.map(deck => {
               const href = safeDeckUrl(deck.id);
-              return <li key={deck.id}>
-                <button disabled={locked || listBusy} onClick={() => replaceDraft(editableDeck(deck), deck)}>{deck.name}</button>
+              const active = previewDeck?.id === deck.id;
+              return <li key={deck.id} className={active ? 'is-preview' : undefined}>
+                <button disabled={locked || listBusy} aria-pressed={active} onClick={() => { setPreviewDeck(deck); setTab('saved'); }}>{deck.name}</button>
                 <span className="saved-deck-meta">·{deck.cards.reduce((total, entry) => total + entry.quantity, 0)}
                   <span className="card-back" aria-hidden="true" />
                 </span>
+                <button type="button" className="saved-deck-edit" disabled={locked || listBusy} onClick={() => { setPreviewDeck(null); replaceDraft(editableDeck(deck), deck); setTab('create'); }}>Edit</button>
                 {href && <a className="saved-deck-play" href={href} target="_blank" rel="noopener noreferrer">Play</a>}
               </li>;
             })}</ul>}

@@ -268,7 +268,9 @@ main > header:not(.workspace-header) p {
 
 .workbench {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(330px, 400px);
+  /* The editor column is 16% narrower than before (400 → 336px at its ceiling), which
+     gives the catalogue the extra width the tiles needed. */
+  grid-template-columns: minmax(0, 1fr) minmax(277px, 336px);
   gap: 1.6rem;
   align-items: start;
 }
@@ -312,15 +314,18 @@ main > header:not(.workspace-header) p {
 
 .catalog-grid {
   display: grid;
-  /* Wide enough for the enlarged face (186px) plus the tile's own padding. */
-  grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
+  /* Four columns at the app's widest layout (catalogue ~870px): 200px min lets the
+     auto-fill pack four tiles, and falls back to three on narrower screens. The skeleton
+     below uses the same rule so the loading state never shows a different count. */
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.9rem;
 }
 
 /* The catalogue shows the face a size up from the board — another 12% on top of the
-   previous pass (166 → 186px), with the aspect ratio carrying the height along. */
+   previous pass (166 → 186px), with the aspect ratio carrying the height along. The
+   `min()` lets the face shrink on the tighter four-column grid instead of overflowing. */
 .catalog-grid .card {
-  width: 186px;
+  width: min(186px, 100%);
 }
 
 /* The catalogue's own stagger is the entrance; the page-stage gate only has to hand over
@@ -330,14 +335,13 @@ main > header:not(.workspace-header) p {
   animation-duration: 120ms;
 }
 
-/* The catalogue settles in tile by tile: each article starts a little lower and
-   transparent, and 30ms of extra delay per column slot turns a block of 20 tiles into a
-   visible wave instead of one flash. `backwards` (not `both`) matters: with `both` the
-   finished animation would keep owning `transform` and kill the hover lift. */
+/* Scale & pop: the tile starts slightly small and low, then the back-out curve carries it
+   past its resting size before it settles. `backwards` (not `both`) matters: with `both`
+   the finished animation would keep owning `transform` and kill the hover lift. */
 @keyframes tile-in {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(14px) scale(0.92);
   }
 
   to {
@@ -352,13 +356,20 @@ main > header:not(.workspace-header) p {
   align-items: start;
   gap: 0.4rem;
   padding: 0.75rem;
+  /* Anchors the "already in the deck" tick and the copy-count badge. */
+  position: relative;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: linear-gradient(180deg, #14231c, #0d1813);
   box-shadow: var(--shadow-panel);
   overflow-wrap: anywhere;
-  animation: tile-in 0.45s cubic-bezier(0.25, 1, 0.5, 1) backwards;
-  animation-delay: calc(var(--i, 0) * 30ms);
+  /* 34/156/64/100 = easeOutBack: the value overshoots past its target and settles, which
+     is what turns the scale into a pop instead of a plain fade-up. */
+  animation: tile-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  /* One tile at a time, in DOM order: 55ms between neighbours reads as a clear sequence,
+     where 30ms grouped each row visually. The cap keeps the last tiles from waiting.
+     Linear index (not row/column math) is what makes it per-article. */
+  animation-delay: min(calc(var(--i, 0) * 55ms), 880ms);
   /* Springy, not linear: the tile lifts like a physical card, and the shadow catches up
      a beat later so the lift reads as height rather than a slide. */
   transition:
@@ -393,11 +404,68 @@ main > header:not(.workspace-header) p {
   color: var(--parchment);
 }
 
+/* Green tick when the card already sits in the draft; ×N badge while previewing a saved
+   deck. The tick is the only thing the corner shows, so it stays readable at tile size. */
+.tile-selected,
+.tile-count {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.35rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tile-selected {
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 1.35rem;
+  color: #fff;
+  background: #3f9b6d;
+  box-shadow: 0 2px 10px -2px #000000a6;
+  animation: tile-badge-in 160ms ease-out;
+}
+
+.tile-selected svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.tile-count {
+  top: 0.5rem;
+  left: 0.5rem;
+  min-width: 1.35rem;
+  padding: 0 0.3rem;
+  color: var(--parchment);
+  background: #0b1511e6;
+  border: 1px solid var(--brass-dim);
+}
+
+@keyframes tile-badge-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .catalog-grid article,
   .catalog-grid article .card {
     animation: none;
     transition: none;
+  }
+
+  .tile-selected {
+    animation: none;
   }
 
   .catalog-grid article:hover,
@@ -503,6 +571,8 @@ aside section > p {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Selected/hover colours ease instead of snapping when the tab changes. */
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
 .deck-tabs button:hover:not(:disabled) {
@@ -538,10 +608,75 @@ aside section > p {
   margin: 0 -1.2rem;
   padding: 0.95rem 1.2rem 0;
   border-top: 1px solid var(--line);
+  /* Tabs cross-fade: the incoming panel starts transparent, and the outgoing one keeps
+     painting for 160ms because `display` is animated discretely. */
+  opacity: 1;
+  transition: opacity 160ms ease, display 160ms allow-discrete;
 }
 
 .deck-panel[hidden] {
   display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .deck-panel:not([hidden]) {
+    opacity: 0;
+  }
+}
+
+/* ── Catalogue preview (My Decks tab) ───────────────────────────────────────
+   Read-only view of a saved deck: a pill that returns to the full list, a dashed tile
+   for ids the catalog no longer has, and a highlighted row for the deck being shown. */
+.catalog-show-all {
+  margin-left: 0.6rem;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.7rem;
+  border: 1px solid var(--brass-dim);
+  border-radius: 999px;
+  background: #0b1511;
+  color: var(--parchment-dim);
+  vertical-align: middle;
+}
+
+.catalog-show-all:hover {
+  color: var(--parchment);
+  border-color: var(--brass);
+}
+
+.tile-missing {
+  width: 132px;
+  height: 187px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: repeating-linear-gradient(45deg, #0d1813 0 8px, #101d17 8px 16px);
+}
+
+.saved-decks li.is-preview {
+  border-color: var(--brass);
+  background: #16281f;
+}
+
+.saved-deck-edit {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #0b1511;
+  color: var(--parchment-dim);
+}
+
+.saved-deck-edit:hover:not(:disabled) {
+  color: var(--parchment);
+  border-color: var(--brass);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deck-panel,
+  .deck-panel[hidden],
+  .deck-tabs button {
+    transition: none;
+  }
 }
 
 /* Saved deck rows mirror the home page: name, count, card-back glyph, then the play
@@ -997,8 +1132,19 @@ textarea {
 
 /* Both skeletons hold the boxes the catalogue and the saved-deck list will occupy:
    a tile is face + three-line blurb + action, a row is the same height as a deck row. */
+/* The placeholder must use the catalogue's own grid. The shared .skeleton-grid is
+   `minmax(9rem, 1fr)`, which lays out four columns where the real grid
+   (`minmax(216px, 1fr)`) shows three — that mismatch is the 4 → 3 jump while loading. */
+.catalog-skeleton {
+  /* Must match .catalog-grid exactly, or the placeholder shows a different column count. */
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.9rem;
+}
+
 .catalog-skeleton .skeleton-block {
-  height: 24.6rem;
+  /* 25.5rem = 408px, matching a loaded four-column tile's resting height (408px measured
+     after the tile-in animation settles), so the grid keeps its height at handover. */
+  height: 25.5rem;
 }
 
 .saved-decks-skeleton {

@@ -1013,7 +1013,8 @@ html[data-route='play'] .workspace-header {
 
 .life-value {
   font-family: var(--font-display);
-  font-size: 1.4rem;
+  /* 12% smaller than the seal's previous content scale; the circle itself stays 3.51rem. */
+  font-size: 1.232rem;
   font-weight: 600;
   line-height: 1;
   color: var(--brass-bright);
@@ -1021,7 +1022,7 @@ html[data-route='play'] .workspace-header {
 }
 
 .life-label {
-  font: 600 0.51rem var(--font-ui);
+  font: 600 0.449rem var(--font-ui);
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1555,9 +1556,19 @@ html[data-route='play'] .workspace-header {
   inset: -3px;
   border-radius: calc(var(--radius) + 3px);
   pointer-events: none;
-  box-shadow: 0 0 0 1px #ffffffa6, 0 0 18px 4px #ffffff59, 0 0 34px 8px #ffffff26;
+  /* Soft gradient bloom only — no hard white ring. Alphas are another 25% lower than the
+     previous pass (0.52 → 0.39 and 0.24 → 0.18), so it reads as a faint warm halo. */
+  box-shadow:
+    0 0 22px 6px #ffffff64,
+    0 0 46px 16px #ffffff2f;
   opacity: 0;
   transition: opacity 320ms ease;
+}
+
+/* Lift the actionable cards above their neighbours so the halo is not clipped away by the
+   card fanned on top of it. */
+.hand-card.is-actionable {
+  z-index: 60;
 }
 
 .hand-card.is-actionable::after {
@@ -1579,7 +1590,7 @@ html[data-route='play'] .workspace-header {
 @media (prefers-reduced-motion: reduce) {
   .hand-card.is-actionable::after {
     animation: none;
-    opacity: 0.85;
+    opacity: 0.51;
   }
 }
 
@@ -2336,7 +2347,7 @@ html[data-route='play'] .workspace-header {
 @media (max-height: 600px) {
   .board-banner button { padding-block: 0.25rem; }
   .board-stage .life-seal { width: 2.97rem; height: 2.97rem; }
-  .board-stage .life-value { font-size: 1.2rem; }
+  .board-stage .life-value { font-size: 1.056rem; }
   .permanent-front { padding-block: 0.2rem; }
   .permanent-front .permanent-slot .card { aspect-ratio: 1 / 1.08; }
   .stack-display .stack-card-face { width: min(100%, 5rem); }
