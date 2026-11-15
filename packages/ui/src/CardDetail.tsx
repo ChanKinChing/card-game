@@ -95,10 +95,16 @@ export function CardDetail({ card, art, origin, onClose }: CardDetailProps) {
       done = true;
       onClose();
     };
-    element.addEventListener('transitionend', finish, { once: true });
+    /* Only the transform ends the exit. Opacity finishes 20ms earlier (200ms vs 220ms),
+       and a bare `{ once: true }` listener would take that first event and unmount the
+       panel while it was still shrinking back toward the card. */
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.propertyName === 'transform') finish();
+    };
+    element.addEventListener('transitionend', onTransitionEnd);
     const timer = window.setTimeout(finish, 320);
     return () => {
-      element.removeEventListener('transitionend', finish);
+      element.removeEventListener('transitionend', onTransitionEnd);
       window.clearTimeout(timer);
     };
   }, [closing, onClose]);
