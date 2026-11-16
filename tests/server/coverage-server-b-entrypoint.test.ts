@@ -31,6 +31,7 @@ type EntryResult = {
 /** Ambient machine settings must never leak into the startup scenarios under test. */
 const clearedEnvironment: Record<string, string | undefined> = {
   CONFIG_FILE: undefined,
+  HOST: undefined,
   PORT: undefined,
   FRONTEND_MODE: undefined,
   INSPECTOR_ENABLED: undefined,
@@ -98,9 +99,9 @@ describe('process entry point startup modes', () => {
     await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
     const [port, host] = entry.application!.listen.mock.calls[0] as [number, string | undefined, () => void];
     expect(port).toBe(3000);
-    expect(host).toBeUndefined();
+    expect(host).toBe('127.0.0.1');
     expect(effectiveConfig(entry.application).profile).toBe('test');
-    expect(mocks.logger.info).toHaveBeenCalledWith('server:listening', 'Game server started', { port: 3000 });
+    expect(mocks.logger.info).toHaveBeenCalledWith('server:listening', 'Game server started', { port: 3000, host: '127.0.0.1' });
     const shutdown = entry.added('SIGINT');
     expect(shutdown).toHaveLength(1);
     expect(entry.added('SIGTERM')).toHaveLength(1);
@@ -109,12 +110,22 @@ describe('process entry point startup modes', () => {
     entry.stop();
   });
 
-  it('adds the public game origin in live mode while preserving configured origins and identity', async () => {
-    const entry = await runEntry(['--live'], { ALLOWED_ORIGINS: 'https://admin.example' });
+  it('binds the host supplied through the environment', async () => {
+    const entry = await runEntry([], { HOST: '0.0.0.0' });
+    try {
+      await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
+      expect(entry.application!.listen.mock.calls[0][1]).toBe('0.0.0.0');
+    } finally {
+      entry.stop();
+    }
+  });
+
+  it('keeps configured origins without a deployment flag', async () => {
+    const entry = await runEntry([], { ALLOWED_ORIGINS: 'https://admin.example,https://game.example' });
     try {
       await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
       const config = effectiveConfig(entry.application);
-      expect(config.origins).toEqual(['https://admin.example', 'https://shit.sschanblog.org']);
+      expect(config.origins).toEqual(['https://admin.example', 'https://game.example']);
       expect(config.profile).toBe('test');
       expect(config.navigation.instanceId).toBe('local-game');
     } finally {
@@ -125,7 +136,7 @@ describe('process entry point startup modes', () => {
   it('selects the Vite navigation without binding a lab host', async () => {
     const entry = await runEntry(['--vite']);
     await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
-    expect(entry.application!.listen.mock.calls[0][1]).toBeUndefined();
+    expect(entry.application!.listen.mock.calls[0][1]).toBe('127.0.0.1');
     expect(effectiveConfig(entry.application).navigation.decks).toContain('5175');
     entry.stop();
   });

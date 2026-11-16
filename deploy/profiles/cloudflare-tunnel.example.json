@@ -1,0 +1,23 @@
+{
+  "http": {
+    "host": "127.0.0.1",
+    "trustProxy": "loopback"
+  },
+  "origins": [
+    "https://shit.sschanblog.org"
+  ],
+  "navigation": {
+    "instanceId": "local-game",
+    "purpose": "development",
+    "label": "Live game",
+    "home": "/home",
+    "play": "/play",
+    "decks": "/deck-builder/",
+    "admin": null,
+    "lab": null,
+    "extraPages": []
+  },
+  "inspectionEnabled": false,
+  "fixturesEnabled": false,
+  "debugMode": "off"
+}

@@ -1,1 +1,1 @@
-{ "port": 3000, "bodyLimitBytes": 8192, "pageSize": 25, "trustProxy": false }
+{ "host": "127.0.0.1", "port": 3000, "bodyLimitBytes": 8192, "pageSize": 25, "trustProxy": false }

@@ -28,6 +28,7 @@ curl -sS -D - -H "Origin: $PUBLIC_ORIGIN" "$PUBLIC_ORIGIN/api/platform"
 | `404` for a current CSS or JavaScript path | Check whether the deployed HTML and asset directory came from the same build. |
 | `200 text/html` for a CSS or JavaScript path | Check whether a proxy or SPA fallback served `index.html` for an asset request. |
 | `502` for assets and API | Check the proxy or tunnel's connection to Node, the configured backend port, and the Node startup logs. Resume origin checks once the upstream responds. |
+| Sign-in returns `500` and the log shows `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` | The proxy adds `X-Forwarded-For` but `http.trustProxy` is `false`. See [trustProxy](#behind-a-tunnel-or-reverse-proxy-also-set-trustproxy). |
 
 ## Developer findings
 
@@ -44,16 +45,31 @@ The browser rejected that JSON response when it tried to use it as CSS. The Java
 
 ## Apply the fix
 
-For the deployment that uses the bundled live site profile, build the release and change the service's start command to `npm run start:live`. If the service launches Node directly, append `--live` to the existing Node command. Keep the service's current environment, working directory, database path, and instance identity. Restart the service after updating the command.
+Add the exact public frontend origin to the service's configuration, then restart. There is no deployment-specific startup flag: the origin allowlist is ordinary configuration.
+
+Use one of these, in order of preference:
+
+1. **Operator file (recommended).** Copy [deploy/profiles/cloudflare-tunnel.example.json](../deploy/profiles/cloudflare-tunnel.example.json) to a non-committed name such as `deploy/profiles/cloudflare-tunnel.local.json`, replace the origin with your hostname, and start with `CONFIG_FILE` pointing at it.
+2. **Environment.** Set `ALLOWED_ORIGINS` to the comma-separated list. This **replaces** the profile list, so include every origin the deployment needs.
 
 ```sh
 npm run build
-npm run start:live
+CONFIG_FILE=deploy/profiles/cloudflare-tunnel.local.json npm start
 ```
 
-`start:live` appends the deployment's configured frontend origin after the regular configuration merge. It keeps other entries supplied through the operator file or `ALLOWED_ORIGINS` and deduplicates the result. The existing profile, port, and storage settings continue to come from the service's configuration.
+Keep the service's current working directory, database path, and instance identity. The database is bound to the `instanceId`/`purpose` pair on first use, so a profile that changes either value is rejected at startup with `Invalid configuration: database instance identity`.
 
 For a different deployment, add its exact frontend origin to the service's comma-separated `ALLOWED_ORIGINS` value and retain other required origins. If the service uses only `CONFIG_FILE`, add it to that file's `origins` list. During a normal startup, an environment `ALLOWED_ORIGINS` value replaces the list in the file. Restart Node after changing either setting. See [configuration precedence](configuration-architecture.md#loading-and-precedence).
+
+### Behind a tunnel or reverse proxy, also set `trustProxy`
+
+A tunnel or nginx hop adds `X-Forwarded-For`. With the default `http.trustProxy: false`, `express-rate-limit` raises `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on every authentication request and cannot identify clients. Set `http.trustProxy: "loopback"` **only** when the proxy is on the same host and overwrites the forwarding headers. Broad trust (`true`, `*`, CIDR strings) is rejected by the schema.
+
+```json
+{ "http": { "host": "127.0.0.1", "trustProxy": "loopback" } }
+```
+
+`http.host` defaults to `127.0.0.1`, so the backend is not reachable from the network unless you explicitly set `HOST`. Keep it on loopback and let the tunnel or proxy connect locally.
 
 ## Verify after restart
 

@@ -6,16 +6,19 @@
 |---|---|---|
 | isolated-lab.example.json | security-lab; data/security-lab/ | Host-only nginx TLS → loopback Node |
 | invited-demo.example.json | invited-demo; data/invited-demo/ | Cloudflare Access/Tunnel → nginx → loopback Node |
+| cloudflare-tunnel.example.json | local-game; data/card-game.sqlite | Cloudflare Tunnel → loopback Node |
 
-Both use purpose=lab to avoid claiming a live service; labels distinguish them. This metadata does not enable Scenario Builder or enforce network isolation. Fixture/debug/inspection remain off. Use normal disposable accounts with valid saved decks. Provision separately; never reuse a database under a different bound identity.
+Both lab examples use purpose=lab to avoid claiming a live service; labels distinguish them. This metadata does not enable Scenario Builder or enforce network isolation. Fixture/debug/inspection remain off. Use normal disposable accounts with valid saved decks. Provision separately; never reuse a database under a different bound identity.
 
-These examples set only supported application overrides. They do not configure Node's missing explicit listen host, nginx, cloudflared, Access, metrics, TLS, firewall, systemd or secrets. Complete those prerequisites before exposure. The loopback proxy must overwrite forwarding identity headers; verify actual attribution before relying on IP limits. Initially keep admin local/off the public navigation.
+`cloudflare-tunnel.example.json` keeps the existing `local-game`/`development` identity so it can be applied to an already-provisioned database. It sets `trustProxy: "loopback"` because the connector adds `X-Forwarded-For`. Copy it to a non-committed `*.local.json` name and replace the origin.
+
+These examples set only supported application overrides. They do not configure nginx, cloudflared, Access, metrics, TLS, firewall, systemd or secrets. Complete those prerequisites before exposure. The loopback proxy must overwrite forwarding identity headers; verify actual attribution before relying on IP limits. Initially keep admin local/off the public navigation.
 
 See [runbooks](../../lab/runbooks/README.md) and [architecture decisions](../../docs/security-lab-architecture.md).
 
 ## Public game startup
 
-Use the [deployment troubleshooting guide](../../docs/deployment-origin-troubleshooting.md) for the live startup command, browser origin checks, and post-restart verification.
+Use the [deployment troubleshooting guide](../../docs/deployment-origin-troubleshooting.md) for the live startup command, browser origin checks, and post-restart verification. There is no deployment-specific startup flag; select a profile with `CONFIG_FILE`.
 
 ## Implemented application lab profile
 

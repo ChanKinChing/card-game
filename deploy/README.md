@@ -13,6 +13,21 @@ Platform Milestone 4 adds the [dedicated admin-origin nginx example](nginx/admin
 
 Milestone 6 adds `/home` and bookmarkable `/play/rooms/:roomId` public routes, browser-family cookies, tab game credentials and instance-bound storage. `npm start` defaults to built-origin links; `npm run dev` explicitly selects Vite frontend destinations. See [current setup/migration](../docs/navigation-session-architecture.md). Take the pre-upgrade rollback backup with the matching old release before opening data with a newer migrator.
 
+### Startup modes
+
+There is one entry point, `apps/server/dist/index.js`. Deployment identity is configuration, not a flag.
+
+| Command | argv | Purpose |
+|---|---|---|
+| `npm start` | none | Built apps, ordinary deployment. Reads `CONFIG_FILE`/environment. |
+| `npm run dev` | `--vite` | Local development with Vite frontend origins. |
+| `npm run start:lab` | `--lab` | Local Scenario Lab; forces `NODE_ENV=development`, loopback, `data/scenario-lab/`. |
+| `node dist/index.js backup <file>` | `backup` | Consistent database snapshot. |
+
+`http.host` defaults to `127.0.0.1`. Set `HOST` only when the backend must listen elsewhere; keep it on loopback behind nginx or a tunnel. When a same-host proxy adds `X-Forwarded-For`, set `http.trustProxy: "loopback"` or authentication requests fail with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
+
+A public hostname is an ordinary `origins` entry. Use an operator file based on [cloudflare-tunnel.example.json](profiles/cloudflare-tunnel.example.json) or [platform-config.example.json](platform-config.example.json), selected with `CONFIG_FILE`. See [origin troubleshooting](../docs/deployment-origin-troubleshooting.md).
+
 For the shown HTTPS topology, adapt [platform-config.example.json](platform-config.example.json), [public nginx](nginx/public.conf.example) and the separate admin vhost. Public Home/Play/Decks share one HTTPS origin; admin uses another. Proxy trust defaults false; the example explicitly trusts only the local loopback proxy, which overwrites forwarded identity headers. Keep the backend private. Examples still require installed-host `nginx -t`, TLS/native/runtime/client-IP/WebSocket verification; these are not claims from local logic/build checks. A lab needs separate credentials/origins/paths/database and a matching instance identity; scenario tooling remains Milestone 7.
 
 Phase 0 establishes these build paths; the host-hardening artifacts below remain future work.

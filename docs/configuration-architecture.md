@@ -26,7 +26,7 @@ Paths below are relative to the repository root. JSON files contain data; adjace
 | Folder/file | Editable content | Consumer |
 |---|---|---|
 | `apps/server/src/config/auth.json` | Argon2id costs, fixed lifetimes, global/per-account browser/per-family tab limits and shared password rate policy | Server only |
-| `apps/server/src/config/http.json` | Port, request/page bounds and explicit false/loopback proxy trust | HTTP composition |
+| `apps/server/src/config/http.json` | Listen host (default `127.0.0.1`), port, request/page bounds and explicit false/loopback proxy trust | HTTP composition |
 | `apps/server/src/config/storage.json` | Default database path, lock timeout, decks per account | Server repository/service |
 | `apps/server/src/config/rooms.json` | Reconnect grace, auto-pass delay (5000ms), selected gameplay preset and rule overrides | Room setup |
 | `apps/server/src/config/logging.json` | Delta/audit paths, audit retry interval and log-read budgets | Server logging/admin reader |
@@ -56,7 +56,7 @@ The production entry loads and validates exactly one effective configuration, th
 3. `FRONTEND_MODE` navigation baseline (`built` default, `vite` only outside production); `npm run dev` selects Vite through the process flag.
 4. Optional operator JSON at `CONFIG_FILE`.
 5. Explicit programmatic overrides for application tests/embedding.
-6. Allowlisted environment overrides: `PORT`, `DATABASE_PATH`, `DELTA_LOG_PATH`, `ADMIN_AUDIT_PATH`, `ALLOWED_ORIGINS`, `INSPECTOR_ENABLED`, `FIXTURE_DECKS_ENABLED`.
+6. Allowlisted environment overrides: `HOST`, `PORT`, `DATABASE_PATH`, `DELTA_LOG_PATH`, `ADMIN_AUDIT_PATH`, `ALLOWED_ORIGINS`, `INSPECTOR_ENABLED`, `FIXTURE_DECKS_ENABLED`.
 
 Nested objects merge; arrays replace. Unknown/dangerous keys, invalid profiles, bad origin strings and out-of-bounds values fail. A production profile never inherits local origins. Environment booleans must be exactly `true` or `false`. An empty delta path disables diagnostic logging. The production audit destination remains required; the isolated test factory has a separate explicit export-disable seam.
 
@@ -82,6 +82,10 @@ Example operator file for a production server:
 Replace example domains/paths for the intended host. Relative database/log paths resolve against the deployed repository root, consistently with existing build paths. Secret bootstrap values are not part of this JSON: use `ADMIN_BOOTSTRAP_USERNAME` and a protected `ADMIN_BOOTSTRAP_PASSWORD_FILE` (or the existing environment-secret alternative). The configuration summary API omits paths, origins, password sources and credentials; it exposes only approved operational values and a configuration revision.
 
 Vite's development proxy targets and the nginx example default to backend port 3000. If you change the backend port, update those owning build/deployment configuration files too; frontends deliberately do not import private server settings.
+
+`http.host` defaults to `127.0.0.1`, so the backend is not reachable from the network unless `HOST` is set explicitly. Keep it on loopback behind nginx or a tunnel. `http.trustProxy` must be `"loopback"` when a same-host proxy adds `X-Forwarded-For`; otherwise `express-rate-limit` rejects authentication requests with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`. Broad trust values are rejected by the schema.
+
+Deployment identity is expressed only through configuration. There is no deployment-specific startup flag: a public hostname is an ordinary `origins` entry in an operator file or `ALLOWED_ORIGINS`. The database binds to `navigation.instanceId`/`purpose` on first use and refuses a mismatched pair.
 
 ## Gameplay/content migration
 
