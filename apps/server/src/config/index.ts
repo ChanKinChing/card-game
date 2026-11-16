@@ -11,6 +11,7 @@ import viteNavigation from './navigation.vite.json';
 import development from './profiles/development.json';
 import production from './profiles/production.json';
 import test from './profiles/test.json';
+import sschanblog from './profiles/sschanblog.json';
 import { AuthConfigSchema, ServerConfigSchema, type ServerConfig } from './schema';
 export type { AuthConfig, ServerConfig } from './schema';
 
@@ -40,7 +41,7 @@ function booleanSetting(name: string, value: string | undefined): boolean | unde
   if (value !== 'true' && value !== 'false') throw new ConfigurationError('Invalid configuration: ' + name);
   return value === 'true';
 }
-export function loadServerConfig(environment: NodeJS.ProcessEnv = process.env, override?: unknown): ServerConfig {
+export function loadServerConfig(environment: NodeJS.ProcessEnv = process.env, override?: unknown, deployment?: 'sschanblog'): ServerConfig {
   const profile = environment.NODE_ENV ?? 'development';
   if (!Object.prototype.hasOwnProperty.call(profiles, profile)) throw new ConfigurationError('Invalid configuration: NODE_ENV');
   let value: unknown = { profile, auth, http, storage, rooms, logging, lab, navigation: profile === 'production' ? { ...navigation, instanceId: 'live-game', purpose: 'live', label: 'Live game', home: '/home', play: '/play', decks: '/deck-builder/', admin: null } : navigation, ...profiles[profile as keyof typeof profiles] };
@@ -64,6 +65,9 @@ export function loadServerConfig(environment: NodeJS.ProcessEnv = process.env, o
   if (inspection !== undefined) overrides.inspectionEnabled = inspection;
   if (fixtures !== undefined) overrides.fixturesEnabled = fixtures;
   value = mergeConfig(value, overrides);
+  if (deployment === 'sschanblog' && object(value) && Array.isArray(value.origins)) {
+    value = { ...value, origins: [...new Set([...value.origins, ...sschanblog.origins])] };
+  }
   const parsed = ServerConfigSchema.safeParse(value);
   if (!parsed.success) throw new ConfigurationError('Invalid configuration: ' + [...new Set(parsed.error.issues.map(issue => issue.path.join('.') || 'root'))].join(', '));
   if (parsed.data.profile !== profile) throw new ConfigurationError('Invalid configuration: profile');

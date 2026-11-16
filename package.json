@@ -30,7 +30,8 @@
     "build:deck-builder": "npm run build -w @card-game/deck-builder",
     "dev:deck-builder": "npm run dev -w @card-game/deck-builder",
     "typecheck:deck-builder": "tsc -b apps/deck-builder",
-    "start:lab": "node apps/server/dist/index.js --lab"
+    "start:lab": "node apps/server/dist/index.js --lab",
+    "start:live": "node apps/server/dist/index.js --live"
   },
   "keywords": [],
   "author": "",

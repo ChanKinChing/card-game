@@ -84,7 +84,7 @@ async function runEntry(args: string[], environment: Record<string, string | und
 }
 
 const effectiveConfig = (application: EntryApplication | undefined) =>
-  (application?.options as { effectiveConfig: { profile: string; navigation: { instanceId: string; decks: string } } })
+  (application?.options as { effectiveConfig: { profile: string; origins: string[]; navigation: { instanceId: string; decks: string } } })
     .effectiveConfig;
 
 describe('process entry point startup modes', () => {
@@ -107,6 +107,19 @@ describe('process entry point startup modes', () => {
     shutdown[0]();
     expect(entry.application!.close).toHaveBeenCalledTimes(1);
     entry.stop();
+  });
+
+  it('adds the public game origin in live mode while preserving configured origins and identity', async () => {
+    const entry = await runEntry(['--live'], { ALLOWED_ORIGINS: 'https://admin.example' });
+    try {
+      await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
+      const config = effectiveConfig(entry.application);
+      expect(config.origins).toEqual(['https://admin.example', 'https://shit.sschanblog.org']);
+      expect(config.profile).toBe('test');
+      expect(config.navigation.instanceId).toBe('local-game');
+    } finally {
+      entry.stop();
+    }
   });
 
   it('selects the Vite navigation without binding a lab host', async () => {
