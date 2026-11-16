@@ -41,6 +41,13 @@ describe('RoomRuntime', () => {
     return { created, joined };
   }
 
+  function start(roomId: string) {
+    expect(runtime.submitRps('socket-1', roomId, 'rock').kind).toBe('pending');
+    const result = runtime.submitRps('socket-2', roomId, 'rock');
+    if (result.kind !== 'started') throw new Error('Expected match to start');
+    return result.room;
+  }
+
   function useRuntime(dependencies: Partial<RuntimeContext>): void {
     runtime.dispose();
     runtime = new RoomRuntime(store, {
@@ -78,7 +85,7 @@ describe('RoomRuntime', () => {
 
     const created = runtime.createRoom('socket-1', 'player-1');
     const missing = runtime.executePlayerAction('socket-1', {
-      roomId: 'missing', actionId: ACTION_IDS.rpsPlay, data: {},
+      roomId: 'missing', actionId: ACTION_IDS.passPriority, data: {},
     });
 
     expect(created.roomId).toBe('room-1');
@@ -90,7 +97,7 @@ describe('RoomRuntime', () => {
     useRuntime({ uuid, random: () => 0 });
 
     runtime.executePlayerAction('socket-1', {
-      roomId: 'missing', actionId: ACTION_IDS.rpsPlay, commandId: 'client-command', data: {},
+      roomId: 'missing', actionId: ACTION_IDS.passPriority, commandId: 'client-command', data: {},
     });
 
     expect(uuid).not.toHaveBeenCalled();
@@ -103,19 +110,8 @@ describe('RoomRuntime', () => {
     const { joined } = createAndJoin();
     joined.room.setup = { ...joined.room.setup, shuffleDevelopmentDeck: true };
 
-    expect([...joined.room.players['player-1'].hand, ...joined.room.players['player-2'].hand]
-      .map(card => card.uuid)).toEqual([
-      'runtime-2', 'runtime-4', 'runtime-6', 'runtime-3', 'runtime-5', 'runtime-7',
-    ]);
-
-    runtime.executePlayerAction('socket-1', {
-      roomId: joined.roomId, actionId: ACTION_IDS.rpsPlay,
-      data: { cardUuid: joined.room.players['player-1'].hand[0].uuid },
-    });
-    runtime.executePlayerAction('socket-2', {
-      roomId: joined.roomId, actionId: ACTION_IDS.rpsPlay,
-      data: { cardUuid: joined.room.players['player-2'].hand[1].uuid },
-    });
+    expect(joined.room.players['player-1'].hand).toEqual([]);
+    start(joined.roomId);
 
     expect(random).toHaveBeenCalledTimes(22);
     expect(Object.values(store.getRoom(joined.roomId)!.players)
@@ -124,7 +120,8 @@ describe('RoomRuntime', () => {
   });
 
   it('uses injected dependencies when recovering an engine from stored room state', () => {
-    const { created, joined } = createAndJoin();
+    const { created } = createAndJoin();
+    start(created.roomId);
     let calls = 0;
     useRuntime({ uuid: () => `recovered-${++calls}`, random: () => 0 });
     expect(runtime.connect('socket-1b', 'player-1', created.roomId).kind).toBe('rejoined');
@@ -132,21 +129,21 @@ describe('RoomRuntime', () => {
 
     expect(runtime.executePlayerAction('socket-1b', {
       roomId: created.roomId,
-      actionId: ACTION_IDS.rpsPlay,
+      actionId: ACTION_IDS.passPriority,
       commandId: 'client-command',
-      data: { cardUuid: joined.room.players['player-1'].hand[0].uuid },
+      data: {},
     }).kind).toBe('success');
 
     expect(published.at(-1)?.batches.map(batch => batch.batchId))
       .toEqual(expect.arrayContaining([expect.stringMatching(/^recovered-/)]));
   });
 
-  it('joins with exactly rock, paper, and scissors for both players in RPS status', () => {
+  it('leaves both hands empty while the lobby is picking', () => {
     const { created, joined } = createAndJoin();
 
-    expect(joined.room.status).toBe('RPS');
-    expect(joined.room.players['player-1'].hand.map(card => card.blueprint.id)).toEqual(['rock', 'paper', 'scissors']);
-    expect(joined.room.players['player-2'].hand.map(card => card.blueprint.id)).toEqual(['rock', 'paper', 'scissors']);
+    expect(joined.room.status).toBe('waiting');
+    expect(joined.room.players['player-1'].hand).toEqual([]);
+    expect(joined.room.players['player-2'].hand).toEqual([]);
     expect(store.getRoom(created.roomId)).toBe(joined.room);
   });
 
@@ -174,8 +171,8 @@ describe('RoomRuntime', () => {
   });
 
   it('returns real options for a valid card query and none for invalid queries', () => {
-    const { joined, created } = createAndJoin();
-    const cardUuid = joined.room.players['player-1'].hand[0].uuid;
+    const { created } = createAndJoin();
+    const cardUuid = start(created.roomId).players['player-1'].hand.find(card => !card.blueprint.cardTypes.includes('Land'))!.uuid;
 
     expect(runtime.getOptions('socket-1', created.roomId, cardUuid, 'hand')).toEqual([
       expect.objectContaining({ actionId: 'cast_spell' }),
@@ -184,49 +181,21 @@ describe('RoomRuntime', () => {
     expect(runtime.getOptions('socket-1', created.roomId, 'missing', 'hand')).toEqual([]);
   });
 
-  it('coordinates both RPS plays, persists the resolved room, and publishes the result', () => {
-    const { created, joined } = createAndJoin();
-    const firstCard = joined.room.players['player-1'].hand[0];
-    const secondCard = joined.room.players['player-2'].hand[1];
-
-    const first = runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: firstCard.uuid },
-    });
-    const second = runtime.executePlayerAction('socket-2', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: secondCard.uuid },
-    });
-
-    expect(first.kind).toBe('success');
-    expect(second).toMatchObject({ kind: 'success', snapshot: { status: 'playing' } });
-    expect(store.getRoom(created.roomId)?.status).toBe('playing');
-    expect(published.at(-1)).toMatchObject({ action: ACTION_IDS.rpsPlay, playerId: 'player-2' });
-    expect(published.at(-1)?.room).toBe(store.getRoom(created.roomId));
-  });
-
-  it('logs the resolved RPS winner after both players choose', () => {
-    const { created, joined } = createAndJoin();
+  it('publishes no engine delta for opening picks and logs the resolved starter', () => {
+    const { created } = createAndJoin();
     const info = vi.spyOn(serverLogger, 'info');
-    vi.spyOn(serverLogger, 'withContext').mockReturnValue(serverLogger);
-
-    runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: joined.room.players['player-1'].hand[0].uuid },
-    });
-    runtime.executePlayerAction('socket-2', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: joined.room.players['player-2'].hand[1].uuid },
-    });
-
-    expect(info).toHaveBeenCalledWith(
-      'rps:resolved',
-      expect.stringMatching(/^RPS resolved; first player /),
-      expect.objectContaining({ roomId: created.roomId, winner: expect.any(String) }),
-    );
+    const room = start(created.roomId);
+    expect(room.status).toBe('playing');
+    expect(published).toEqual([]);
+    expect(info).toHaveBeenCalledWith('match:started', 'Opening round resolved',
+      { roomId: created.roomId, firstPlayerId: 'player-1', picks: ['rock', 'rock'] });
   });
 
   it('logs received commands with stable-player context and choice details', () => {
     const { created, joined } = createAndJoin();
     const { info, withContext } = spyCommandTrace();
     const data = {
-      cardUuid: joined.room.players['player-1'].hand[0].uuid,
+      cardUuid: 'example-card',
       choiceId: 'choice-1',
       number: 2,
       choices: ['one', 'two'],
@@ -236,11 +205,11 @@ describe('RoomRuntime', () => {
     };
 
     runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, commandId: 'command-1', data,
+      roomId: created.roomId, actionId: ACTION_IDS.passPriority, commandId: 'command-1', data,
     });
 
     expect(withContext).toHaveBeenCalledWith({
-      roomId: created.roomId, commandId: 'command-1', action: ACTION_IDS.rpsPlay, playerId: 'player-1',
+      roomId: created.roomId, commandId: 'command-1', action: ACTION_IDS.passPriority, playerId: 'player-1',
     });
     expect(info).toHaveBeenCalledWith('command:received', 'Player action received', {
       cardUuid: data.cardUuid,
@@ -258,11 +227,11 @@ describe('RoomRuntime', () => {
     const { warn, withContext } = spyCommandTrace();
 
     runtime.executePlayerAction('socket-1', {
-      roomId: 'missing', actionId: ACTION_IDS.rpsPlay, commandId: 'command-1', data: {},
+      roomId: 'missing', actionId: ACTION_IDS.passPriority, commandId: 'command-1', data: {},
     });
 
     expect(withContext).toHaveBeenCalledWith({
-      roomId: 'missing', commandId: 'command-1', action: ACTION_IDS.rpsPlay, playerId: 'socket-1',
+      roomId: 'missing', commandId: 'command-1', action: ACTION_IDS.passPriority, playerId: 'socket-1',
     });
     expect(warn).toHaveBeenCalledWith('command:rejected', 'Room not found');
   });
@@ -272,21 +241,15 @@ describe('RoomRuntime', () => {
     gameConfig.logging.actions = false;
     const { info, warn } = spyCommandTrace();
 
+    start(created.roomId);
     runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: joined.room.players['player-1'].hand[0].uuid },
-    });
-    runtime.executePlayerAction('socket-2', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: joined.room.players['player-2'].hand[1].uuid },
-    });
-    runtime.executePlayerAction('socket-1', {
-      roomId: 'missing', actionId: ACTION_IDS.rpsPlay, commandId: 'missing-command', data: {},
+      roomId: 'missing', actionId: ACTION_IDS.passPriority, commandId: 'missing-command', data: {},
     });
 
     expect(info).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith(
-      'rps:resolved',
-      expect.stringMatching(/^RPS resolved; first player /),
-      expect.objectContaining({ roomId: created.roomId, winner: expect.any(String) }),
+      'match:started', 'Opening round resolved',
+      expect.objectContaining({ roomId: created.roomId, firstPlayerId: 'player-1' }),
     );
     expect(info).not.toHaveBeenCalledWith('command:received', expect.anything(), expect.anything());
     expect(warn).not.toHaveBeenCalledWith('command:rejected', 'Room not found');
@@ -295,10 +258,10 @@ describe('RoomRuntime', () => {
 
   it('returns a room-not-found error without publishing', () => {
     const result = runtime.executePlayerAction('socket-1', {
-      roomId: 'missing', actionId: ACTION_IDS.rpsPlay, commandId: 'client-command', data: {},
+      roomId: 'missing', actionId: ACTION_IDS.passPriority, commandId: 'client-command', data: {},
     });
 
-    expect(result).toEqual({ kind: 'error', message: 'Room not found', commandId: 'client-command', action: ACTION_IDS.rpsPlay });
+    expect(result).toEqual({ kind: 'error', message: 'Room not found', commandId: 'client-command', action: ACTION_IDS.passPriority });
     expect(published).toEqual([]);
   });
 
@@ -306,41 +269,44 @@ describe('RoomRuntime', () => {
     const { created } = createAndJoin();
 
     const result = runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: 'missing-card' },
+      roomId: created.roomId, actionId: ACTION_IDS.castSpell, data: { cardUuid: 'missing-card' },
     });
 
-    expect(result).toMatchObject({ kind: 'error', action: ACTION_IDS.rpsPlay });
+    expect(result).toMatchObject({ kind: 'error', action: ACTION_IDS.castSpell });
     expect(published).toEqual([]);
   });
 
   it('preserves caller-supplied command ids', () => {
-    const { created, joined } = createAndJoin();
+    const { created } = createAndJoin();
+    start(created.roomId);
 
     const result = runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, commandId: 'client-command',
-      data: { cardUuid: joined.room.players['player-1'].hand[0].uuid },
+      roomId: created.roomId, actionId: ACTION_IDS.passPriority, commandId: 'client-command',
+      data: {},
     });
 
     expect(result).toMatchObject({ kind: 'success', commandId: 'client-command' });
   });
 
   it('generates command ids when callers omit them', () => {
-    const { created, joined } = createAndJoin();
+    const { created } = createAndJoin();
+    start(created.roomId);
 
     const result = runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: joined.room.players['player-1'].hand[0].uuid },
+      roomId: created.roomId, actionId: ACTION_IDS.passPriority, data: {},
     });
 
     expect(result).toMatchObject({ kind: 'success', commandId: expect.any(String) });
   });
 
   it('resolves delta recipients to current socket ids', () => {
-    const { created, joined } = createAndJoin();
+    const { created } = createAndJoin();
+    start(created.roomId);
     runtime.disconnect('socket-2');
     expect(runtime.connect('socket-2-new', 'player-2', created.roomId).kind).toBe('rejoined');
 
     runtime.executePlayerAction('socket-1', {
-      roomId: created.roomId, actionId: ACTION_IDS.rpsPlay, data: { cardUuid: joined.room.players['player-1'].hand[0].uuid },
+      roomId: created.roomId, actionId: ACTION_IDS.passPriority, data: {},
     });
 
     expect(published.at(-1)?.recipients).toEqual(new Map([
@@ -404,8 +370,8 @@ describe('RoomRuntime', () => {
   it('clears timers and disposes retained engines exactly once when disposed repeatedly', () => {
     const dispose = vi.spyOn(GameEngine.prototype, 'dispose');
     const clearTimeout = vi.spyOn(globalThis, 'clearTimeout');
-    const { created, joined } = createAndJoin();
-    const cardUuid = joined.room.players['player-2'].hand[0].uuid;
+    const { created } = createAndJoin();
+    const cardUuid = start(created.roomId).players['player-2'].hand[0].uuid;
     runtime.disconnect('socket-1');
     expect(runtime.getOptions('socket-2', created.roomId, cardUuid, 'hand')).not.toEqual([]);
 

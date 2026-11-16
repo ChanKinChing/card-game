@@ -5,13 +5,14 @@ interface DebugControlsProps {
   mode: DebugMode;
   stackLength: number;
   ready: boolean;
+  actions?: readonly ActionIdOrAbility[];
   onAction: (actionId: ActionIdOrAbility) => void;
 }
 
-export default function DebugControls({ mode, stackLength, ready, onAction }: DebugControlsProps) {
+export default function DebugControls({ mode, stackLength, ready, actions, onAction }: DebugControlsProps) {
   if (!ready || mode === 'off') return null;
-  const canResolve = stackLength > 0;
-  const canEndTurn = mode === 'flow' && stackLength === 0;
+  const canResolve = actions?.includes(ACTION_IDS.resolveStack) ?? stackLength > 0;
+  const canEndTurn = actions?.includes(ACTION_IDS.endTurn) ?? (mode === 'flow' && stackLength === 0);
   if (!canResolve && !canEndTurn) return null;
 
   return (

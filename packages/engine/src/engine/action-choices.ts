@@ -325,18 +325,21 @@ export function prepareActionChoice(
 
     // Target groups come from action data and are narrowed after the array check.
     const selected = Array.isArray(data.targetGroups) ? (data.targetGroups as { id: string }[]) : [];
-    const missing = groups.find((group) => !selected.some((entry) => entry.id === group.id));
-
-    if (missing) {
-      return request({
+    let firstChoice: Omit<ListedChoice, 'id' | 'playerId'> | undefined;
+    for (const group of groups) {
+      if (selected.some(entry => entry.id === group.id)) continue;
+      const choice: Omit<ListedChoice, 'id' | 'playerId'> = {
         kind: 'targets',
-        prompt: 'Choose targets: ' + missing.id,
-        options: targetOptions(room, playerId, card, missing.targeting),
-        min: missing.targeting.minTargets ?? (missing.targeting.required ? 1 : 0),
-        max: missing.targeting.maxTargets ?? 1,
-        continuation: continuation('targetGroups', missing.id),
-      });
+        prompt: 'Choose targets: ' + group.id,
+        options: targetOptions(room, playerId, card, group.targeting),
+        min: group.targeting.minTargets ?? (group.targeting.required ? 1 : 0),
+        max: group.targeting.maxTargets ?? 1,
+        continuation: continuation('targetGroups', group.id),
+      };
+      if (!choiceCanComplete(choice)) return reject('No legal choices can complete this action');
+      firstChoice ??= choice;
     }
+    if (firstChoice) return prompt({ ...firstChoice, id: '', playerId });
   }
 
   if (actionId !== 'tapForMana') {

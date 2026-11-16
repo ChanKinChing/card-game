@@ -3,8 +3,8 @@ import { GameEngine } from '@engine/game-engine';
 import { createTestRoom, fillTestLibraries } from '../helpers/test-room-factory';
 
 describe('concession', () => {
-  it.each(['playing', 'RPS'] as const)('ends %s without priority and clears pending rules work', status => {
-    const room = createTestRoom({ status, priorityPlayerId: 'player2' }); fillTestLibraries(room);
+  it('ends play without priority and clears pending rules work', () => {
+    const room = createTestRoom({ priorityPlayerId: 'player2' }); fillTestLibraries(room);
     room.pendingChoice = { id: 'choice', playerId: 'player2', kind: 'optional', prompt: 'Wait', min: 1, max: 1,
       options: [], continuation: { type: 'trigger', field: 'order' } };
     const engine = new GameEngine(room); engine.initRoom();

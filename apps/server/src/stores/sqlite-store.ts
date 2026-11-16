@@ -7,6 +7,7 @@ import { storageDefaults, ConfigurationError, type ServerConfig } from '../confi
 import type { AccountRecord, AccountRepository, SeatOwnership, SessionRecord } from '../auth/account-store';
 import type { DeckRepository } from '../decks/deck-store';
 import { migrate } from './migrations';
+import type { MatchRepository, StoredMatch, StoredMatchCommand } from '../rooms/match-recovery';
 
 type AccountRow = Omit<AccountRecord, 'disabled'> & { disabled: number };
 type SessionRow = Omit<SessionRecord, 'subject'> & { subjectKind: SessionRecord['subject']['kind']; subjectId: string };
@@ -17,7 +18,7 @@ const sessionColumns = 'id,digest,subject_kind AS subjectKind,subject_id AS subj
 import { ScenarioRecordSchema, type ScenarioRecord } from '@card-game/protocol';
 import type { ScenarioRepository } from '../scenarios/repository';
 
-export class SqliteStore implements AccountRepository, DeckRepository, AuditRepository, ScenarioRepository {
+export class SqliteStore implements AccountRepository, DeckRepository, AuditRepository, ScenarioRepository, MatchRepository {
   private readonly database: Database.Database;
   private readonly statements = new Map<string, Database.Statement>();
   private readonly seats = new Map<string, Map<string, SeatOwnership>>();
@@ -35,6 +36,9 @@ export class SqliteStore implements AccountRepository, DeckRepository, AuditRepo
         if (existing && (existing.instanceId !== identity.instanceId || existing.purpose !== identity.purpose)) throw new ConfigurationError('Invalid configuration: database instance identity. Use the matching instance or a separate database.');
         if (!existing) this.database.prepare('INSERT INTO instance_identity(singleton,instance_id,purpose) VALUES (1,?,?)').run(identity.instanceId, identity.purpose);
       }).immediate();
+      const seats = this.statement('SELECT room_id AS roomId,player_id AS playerId,owner,account_id AS accountId FROM match_seats')
+        .all() as (Omit<SeatOwnership, 'accountId'> & { accountId: string | null })[];
+      for (const { accountId, ...seat } of seats) this.cacheSeat({ ...seat, ...(accountId ? { accountId } : {}) });
     } catch (error) { this.database.close(); throw error; }
   }
   private statement(sql: string): Database.Statement {
@@ -97,12 +101,66 @@ export class SqliteStore implements AccountRepository, DeckRepository, AuditRepo
   ownedSeat(roomId: string, owner: string) { const seat = [...this.seats.get(roomId)?.values() ?? []].find(value => value.owner === owner); return seat && { ...seat }; }
   seatOwner(roomId: string, playerId: string) { return this.seats.get(roomId)?.get(playerId)?.owner; }
   saveSeat(seat: SeatOwnership) {
+    this.statement(`INSERT INTO match_seats(room_id,player_id,owner,account_id)
+      SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM active_matches WHERE room_id=?)
+      ON CONFLICT(room_id,player_id) DO UPDATE SET owner=excluded.owner,account_id=excluded.account_id`)
+      .run(seat.roomId, seat.playerId, seat.owner, seat.accountId ?? null, seat.roomId);
+    this.cacheSeat(seat);
+  }
+  private cacheSeat(seat: SeatOwnership) {
     let seats = this.seats.get(seat.roomId);
     if (!seats) { seats = new Map(); this.seats.set(seat.roomId, seats); }
     seats.set(seat.playerId, { ...seat });
   }
-  deleteSeat(roomId: string, playerId: string) { this.seats.get(roomId)?.delete(playerId); }
-  deleteRoomSeats(roomId: string) { this.seats.delete(roomId); }
+  deleteSeat(roomId: string, playerId: string) {
+    this.statement('DELETE FROM match_seats WHERE room_id=? AND player_id=?').run(roomId, playerId);
+    this.seats.get(roomId)?.delete(playerId);
+  }
+  deleteRoomSeats(roomId: string) {
+    this.statement('DELETE FROM match_seats WHERE room_id=?').run(roomId);
+    this.seats.delete(roomId);
+  }
+
+  matches(): StoredMatch[] {
+    return this.statement(`SELECT room_id AS roomId, format_version AS version, checkpoint, checkpoint_hash AS checkpointHash,
+      checkpoint_ordinal AS checkpointOrdinal, checkpoint_seq AS checkpointSeq, ordinal,
+      view_seq AS viewSeq, state_hash AS stateHash FROM active_matches`).all() as StoredMatch[];
+  }
+  matchCommands(roomId: string, afterOrdinal: number): StoredMatchCommand[] {
+    return this.statement(`SELECT ordinal,player_id AS playerId,command_id AS commandId,action_id AS actionId,entry
+      FROM match_commands WHERE room_id=? AND ordinal>? ORDER BY ordinal`).all(roomId, afterOrdinal) as StoredMatchCommand[];
+  }
+  acceptedAction(roomId: string, playerId: string, commandId: string): string | undefined {
+    const row = this.statement('SELECT action_id AS actionId FROM match_commands WHERE room_id=? AND player_id=? AND command_id=?')
+      .get(roomId, playerId, commandId) as { actionId: string } | undefined;
+    return row?.actionId;
+  }
+  createMatch(match: StoredMatch): void {
+    this.database.transaction(() => {
+      const seats = this.seats.get(match.roomId);
+      if (seats?.size !== 2) throw new Error('Active match requires two seat owners');
+      this.statement(`INSERT INTO active_matches(room_id,format_version,checkpoint,checkpoint_hash,
+        checkpoint_ordinal,checkpoint_seq,ordinal,view_seq,state_hash)
+        VALUES (@roomId,@version,@checkpoint,@checkpointHash,@checkpointOrdinal,@checkpointSeq,@ordinal,@viewSeq,@stateHash)`).run(match);
+      for (const seat of seats.values()) {
+        this.statement('INSERT INTO match_seats(room_id,player_id,owner,account_id) VALUES (?,?,?,?)')
+          .run(seat.roomId, seat.playerId, seat.owner, seat.accountId ?? null);
+      }
+    }).immediate();
+  }
+  appendMatchCommand(roomId: string, command: StoredMatchCommand, head: StoredMatch): void {
+    this.database.transaction(() => {
+      const updated = this.statement(`UPDATE active_matches SET ordinal=@ordinal,view_seq=@viewSeq,state_hash=@stateHash,
+        checkpoint=@checkpoint,checkpoint_hash=@checkpointHash,checkpoint_ordinal=@checkpointOrdinal,checkpoint_seq=@checkpointSeq
+        WHERE room_id=@roomId AND ordinal=@ordinal-1`).run(head);
+      if (updated.changes !== 1) throw new Error('Active match position moved');
+      this.statement(`INSERT INTO match_commands(room_id,ordinal,player_id,command_id,action_id,entry)
+        VALUES (@roomId,@ordinal,@playerId,@commandId,@actionId,@entry)`).run({ roomId, ...command });
+    }).immediate();
+  }
+  deleteMatch(roomId: string): void {
+    this.statement('DELETE FROM active_matches WHERE room_id=?').run(roomId);
+  }
 
   private deck(row: unknown): SavedDeck | undefined {
     if (!row) return;

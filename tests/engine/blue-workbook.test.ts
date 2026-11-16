@@ -388,3 +388,56 @@ describe('blue mill finisher and random discard', () => {
     expect(activate(restored).success).toBe(false);
   });
 });
+
+it.each([
+  ['phantom-sea-gotu', 2],
+  ['seaborn-illusionist', 1],
+  ['blue-sea-prince', 4],
+  ['sea-god-caller-haya', 2],
+] as const)('%s mills the exact top %s cards when it attacks', (id, amount) => {
+  const attacker = card(id, 'battlefield');
+  const engine = game(attacker);
+  const library = ids(engine.roomState.players.player2.deck);
+  const ownLibrary = ids(engine.roomState.players.player1.deck);
+  engine.roomState.phase = 'declareAttackersStep';
+  engine.roomState.priorityPlayerId = null;
+
+  expect(engine.executePlayerAction('player1', 'declare_attackers', {
+    attackers: [{ cardUuid: attacker.uuid }],
+  }).success).toBe(true);
+  expect(engine.roomState.stack).toHaveLength(1);
+  resolve(engine);
+  expect(ids(engine.roomState.players.player2.graveyard)).toEqual(library.slice(-amount).reverse());
+  expect(ids(engine.roomState.players.player2.deck)).toEqual(library.slice(0, -amount));
+  expect(ids(engine.roomState.players.player1.deck)).toEqual(ownLibrary);
+});
+
+it('declining Haya’s reveal leaves its separate entry mill intact', () => {
+  const engine = game();
+  const ownLibrary = ids(engine.roomState.players.player1.deck);
+  const otherLibrary = ids(engine.roomState.players.player2.deck);
+  cast(engine, 'sea-god-caller-haya');
+  select(engine, options(engine).map(option => option.id));
+  resolve(engine);
+  if (!engine.roomState.pendingChoice) resolve(engine);
+  expect(options(engine).map(option => option.id)).toContain('reveal-six');
+  select(engine, []);
+  if (engine.roomState.stack.length) resolve(engine);
+  expect(ids(engine.roomState.players.player1.deck)).toEqual(ownLibrary);
+  expect(engine.roomState.players.player1.hand).toEqual([]);
+  expect(ids(engine.roomState.players.player2.graveyard)).toEqual(otherLibrary.slice(-2).reverse());
+});
+
+it('Abyss Illusionist ignores a Giant attacking for the opponent', () => {
+  const observer = card('abyss-illusionist', 'battlefield');
+  const attacker = card('sea-city-noble', 'battlefield', 'player2');
+  const engine = game(observer, attacker);
+  engine.roomState.activeTurnPlayerId = 'player2';
+  engine.roomState.phase = 'declareAttackersStep';
+  engine.roomState.priorityPlayerId = null;
+  expect(engine.executePlayerAction('player2', 'declare_attackers', {
+    attackers: [{ cardUuid: attacker.uuid }],
+  }).success).toBe(true);
+  expect(engine.roomState.stack).toEqual([]);
+  expect(engine.roomState.players.player1.graveyard).toEqual([]);
+});

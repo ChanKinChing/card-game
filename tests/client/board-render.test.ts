@@ -60,6 +60,24 @@ describe('battlefield board', () => {
     expect(renderToStaticMarkup(createElement(PermanentStatus, { badges: [] }))).toBe('');
   });
 
+
+  it('orders several counters and labels a granted keyword through its duration', () => {
+    const card = permanent('effect', {
+      effects: [{ kind: 'keyword', keyword: 'Flying', duration: 'combat', sourceName: 'Wind' }],
+    });
+    card.state.counters = { frost: 1, charge: 2, scorch: 3 };
+    const html = renderBattlefield([card]);
+    expect(html).toContain('aria-label="Scorch 3, charge 2, frost 1, Flying · Until end of combat · Wind"');
+  });
+
+  it('groups an attachment from a legacy snapshot with its original host', () => {
+    const host = permanent('original');
+    delete host.state.zoneRevision;
+    const attached = permanent('attachment', { name: 'Old equipment', cardTypes: ['Artifact'] });
+    attached.state.attachedTo = host.uuid;
+    expect(renderBattlefield([host, attached])).toContain('Inspect attached Old equipment');
+  });
+
   it('renders both halves of the felt', () => {
     const html = renderBattlefield([]);
     expect(html).toContain('board-half-opponent');
@@ -123,7 +141,9 @@ describe('battlefield board', () => {
     const choosing = renderBattlefield(tokens, {}, targeting);
     expect(choosing.match(/permanent-slot/g)).toHaveLength(3);
     expect(choosing).toContain('data-board-anchor="battlefield:t2:0"');
-    const declaring = renderBattlefield(tokens, { phase: 'declareAttackersStep', activeTurnPlayerId: 'player1', status: 'playing' });
+    const declaring = renderBattlefield(tokens, { phase: 'declareAttackersStep', legalActions: {
+      actions: ['concede'], combat: { actionId: 'declare_attackers', attackerUuids: tokens.map(card => card.uuid) },
+    } });
     expect(declaring.match(/permanent-slot/g)).toHaveLength(4);
   });
 

@@ -6,6 +6,7 @@ import { projectViewDelta } from '@server/projection/delta-projector';
 import { decodeChoiceAnswer } from '@server/projection/choice-view';
 import { PROTOCOL_VERSION } from '@card-game/protocol/version';
 import { gameReducer } from '@engine/game-reducer';
+import { GameEngine } from '@engine/game-engine';
 import { decodeAbilityId } from '@server/projection/wire-identifiers';
 import { creature } from '../helpers/combat-fixture';
 import { resolutionChoice } from '@engine/resolution-choices';
@@ -48,12 +49,6 @@ describe('player projection boundary', () => {
     expect(view.battlefield[0].targetGroups['activate_ability:' + option.data?.abilityId]).toHaveLength(1);
   });
 
-  it('hides an opponent RPS play until the round has resolved', () => {
-    const room = createTestRoom(); room.rpsState = { status: 'pending', playedCards: { player2: 'rock' } };
-    expect(buildPlayerView(room, 'player1').rpsState.playedCards).toEqual({});
-    expect(buildPlayerView(room, 'player2').rpsState.playedCards).toEqual({ player2: 'rock' });
-    room.rpsState.status = 'resolved'; expect(buildPlayerView(room, 'player1').rpsState.playedCards.player2).toBe('rock');
-  });
   it('exposes only owned hands, public counts and display fields, never raw blueprints or decks', () => {
     const room = createTestRoom(); fillTestLibraries(room);
     const hidden = instantiateCard('choice-practice'); hidden.state.ownerId = 'player2'; hidden.state.controllerId = 'player2'; hidden.state.zone = 'hand';
@@ -101,6 +96,30 @@ describe('player projection boundary', () => {
     expect(groups[0].legalTargets.some(target => target.cardUuid === warded.uuid)).toBe(false);
     expect(groups[0].legalTargets.every(target => target.zoneRevision === 0)).toBe(true);
     for (const player of Object.values(room.players)) for (const card of player.deck) expect(JSON.stringify(groups)).not.toContain(card.uuid);
+  });
+
+  it('uses the pending choice panel for a target in the graveyard', () => {
+    const room = createTestRoom();
+    const source = room.players.player1.hand[0];
+    const target = creature('graveyard-target', 'player1');
+    target.state.zone = 'graveyard';
+    room.players.player1.graveyard = [target];
+    source.blueprint = { ...source.blueprint, cardTypes: ['Spell'], onCastEffects: [{
+      action: 'MOVE_ZONE', params: { origin: 'graveyard', destination: 'hand' },
+      targeting: { type: 'card', zones: ['graveyard'], controller: 'self', required: true },
+    }] };
+    const card = buildPlayerView(room, 'player1').players.player1.hand[0];
+    expect(card.actions).toContainEqual(expect.objectContaining({ actionId: 'cast_spell', disabled: false, nextInput: 'targets' }));
+    expect(card.targetGroups.cast_spell).toBeUndefined();
+    const engine = new GameEngine(room);
+    engine.initRoom();
+    try {
+      expect(engine.executePlayerAction('player1', 'cast_spell', { cardUuid: source.uuid }).success).toBe(true);
+      const choice = buildPlayerView(engine.roomState, 'player1').pendingChoice;
+      if (choice?.kind !== 'targets') throw new Error('Expected the live target choice');
+      expect(choice.options).toEqual([expect.objectContaining({ label: target.blueprint.name })]);
+      expect(buildPlayerView(engine.roomState, 'player2').pendingChoice).toEqual({ kind: 'waiting', playerId: 'player1' });
+    } finally { engine.dispose(); }
   });
 
   it('projects active modifiers from the engine and clears them in both snapshots and deltas', () => {

@@ -1,10 +1,10 @@
+import { createRoom } from '@engine/room-factory';
 import { answerSingleRecipientCombat } from '../helpers/combat-fixture';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GameEngine } from '@engine/game-engine';
 import { EventBus } from '@engine/event-bus';
 import { createDefaultActionRegistry } from '@engine/default-action-registry';
 import { OptionService } from '@engine/option-service';
-import { createRoom, joinRoom, setupRPS } from '@engine/room-factory';
 import { createTestRoom, fillTestLibraries } from '../helpers/test-room-factory';
 import { instantiateCard } from '@library/card-factory';
 import type { GameRoom } from '@shared/game.room.types';
@@ -106,8 +106,8 @@ describe('player command boundary', () => {
     rejected('player1', 'cast_spell', { cardUuid: 'missing' });
   });
 
-  it.each(['waiting', 'RPS'] as const)('rejects ordinary actions while %s', status => {
-    room.status = status;
+  it('rejects ordinary actions while waiting', () => {
+    room.status = 'waiting';
     rejected('player1', 'pass_priority');
   });
 
@@ -146,19 +146,6 @@ describe('player command boundary', () => {
     expect(engine.roomState.players.player2.life).toBe(19);
   });
 
-  it('applies RPS choices without the normal stack and rejects duplicate choices', () => {
-    engine.dispose();
-    room = createRoom('rps', 'player1');
-    joinRoom(room, 'player2');
-    setupRPS(room);
-    engine = new GameEngine(room);
-    engine.initRoom();
-    const card = room.players.player1.hand[0];
-    expect(engine.executePlayerAction('player1', 'rpsPlay', { cardUuid: card.uuid }).success).toBe(true);
-    expect(engine.roomState.rpsState.playedCards.player1).toBe('rock');
-    expect(engine.roomState.stack).toEqual([]);
-    rejected('player1', 'rpsPlay', { cardUuid: engine.roomState.players.player1.hand[0].uuid });
-  });
 
   it('retains extension data when routing a registered card action', () => {
     const addonHandler = {
@@ -204,7 +191,6 @@ describe('player command boundary', () => {
     expect(engine.roomState.status).toBe('gameOver');
     expect(engine.roomState.priorityPlayerId).toBeNull();
     rejected('player2', 'end_turn');
-    rejected('player1', 'rpsPlay');
   });
 
   it('returns no options for missing players, invalid fields or terminal rooms', () => {

@@ -56,7 +56,7 @@ describe('effective mana cost and real phantom consumers', () => {
     expect(engine.executePlayerAction('player1', 'cast_spell', { cardUuid: c.uuid }).success).toBe(true);
     expect(engine.roomState.players.player1.mana.red).toBe(0);
   });
-  it('the puppet attack can deploy the selected exact graveyard puppet, with no ordinary graveyard casting permission', () => {
+  it.each([true, false])('the Puppet attack may deploy the selected graveyard Puppet (accept: %s)', accept => {
     const puppet = instantiateCard('phantom-puppet'); puppet.state = { ...puppet.state, ownerId: 'player1', controllerId: 'player1', zone: 'battlefield', summoningSickness: false };
     const engine = engineWith(puppet); engine.roomState.phase = 'declareAttackersStep'; engine.roomState.priorityPlayerId = null;
     const target = instantiateCard('phantom-giant'); target.state = { ...target.state, ownerId: 'player1', controllerId: 'player1', zone: 'graveyard' }; engine.roomState.players.player1.graveyard = [target];
@@ -64,8 +64,9 @@ describe('effective mana cost and real phantom consumers', () => {
     expect(engine.executePlayerAction('player1', 'declare_attackers', { attackers: [{ cardUuid: puppet.uuid }] }).success).toBe(true);
     expect(engine.resolveTopOfStack().success).toBe(true);
     const choice = engine.roomState.pendingChoice!;
-    expect(engine.executePlayerAction('player1', 'choose', { choiceId: choice.id, choices: [target.uuid] }).success).toBe(true);
-    expect(engine.roomState.battlefield.some(c => c.uuid === target.uuid)).toBe(true);
+    expect(engine.executePlayerAction('player1', 'choose', { choiceId: choice.id, choices: accept ? [target.uuid] : [] }).success).toBe(true);
+    expect(engine.roomState.battlefield.some(c => c.uuid === target.uuid)).toBe(accept);
+    expect(engine.roomState.players.player1.graveyard.some(c => c.uuid === target.uuid)).toBe(!accept);
   });
 });
 

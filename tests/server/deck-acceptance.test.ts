@@ -137,13 +137,14 @@ describe('Milestone 3 HTTP and short saved-deck match', () => {
     error = once(p2.socket, 'error'); p2.socket.emit('joinRoom', { protocolVersion: 1, roomId, deckId: aDeck.id }); expect((await error).message).toBe('Deck not found.');
     const joined = once(p2.socket, 'roomJoined'); p2.socket.emit('joinRoom', { protocolVersion: 1, roomId, deckId: bDeck.id }); await joined;
     expect((await request('/api/decks/' + bDeck.id, 'DELETE', b.token)).status).toBe(204);
-    await vi.waitFor(() => expect(p2.view()?.status).toBe('RPS'));
-    for (const [player, session] of [[p1, a], [p2, b]] as const) {
-      const rock = player.view()!.players[session.playerId].hand.find(card => card.definitionId === 'rock')!;
-      const delta = once(player.socket, 'stateDelta'); player.socket.emit('playerAction', { protocolVersion: 1, roomId, actionId: 'rpsPlay', cardUuid: rock.uuid }); await delta;
-    }
+    await vi.waitFor(() => expect(p2.view()?.player2Id).toBe(b.playerId));
+    const locked = once(p1.socket, 'roomSnapshot');
+    p1.socket.emit('submitRps', { protocolVersion: 1, roomId, pick: 'rock' }); await locked;
+    p2.socket.emit('submitRps', { protocolVersion: 1, roomId, pick: 'paper' });
     await vi.waitFor(() => expect(p1.view()?.status).toBe('playing'));
     const authoritative = () => app!.store.getRoom(roomId)!;
+    expect(authoritative().activeTurnPlayerId).toBe(b.playerId);
+    expect(Object.values(authoritative().players).every(player => player.graveyard.length === 0)).toBe(true);
     expect(authoritative().setup!.playerDecks![a.playerId]).toEqual(captured);
     for (const [session, creature] of [[a, 'empire-servant'], [b, 'red-wolf']] as const) {
       const state = authoritative().players[session.playerId], cards = [...state.hand, ...state.deck].map(card => card.blueprint.id);
@@ -158,7 +159,9 @@ describe('Milestone 3 HTTP and short saved-deck match', () => {
     expect(authoritative().phase).toBe('stateMainPhase');
     const active = authoritative().activeTurnPlayerId, player = active === a.playerId ? p1 : p2;
     const land = authoritative().players[active].hand.find(card => card.blueprint.id === 'land-red')!;
-    const delta = once(player.socket, 'stateDelta'); player.socket.emit('playerAction', { protocolVersion: 1, roomId, actionId: 'play_land', cardUuid: land.uuid, zoneRevision: land.state.zoneRevision ?? 0 }); await delta;
+    const commandId = randomUUID();
+    const delta = once<{ commandId?: string }>(player.socket, 'stateDelta', value => value.commandId === commandId);
+    player.socket.emit('playerAction', { protocolVersion: 1, roomId, commandId, actionId: 'play_land', cardUuid: land.uuid, zoneRevision: land.state.zoneRevision ?? 0 }); await delta;
     expect(authoritative().battlefield.some(card => card.uuid === land.uuid && card.state.ownerId === active)).toBe(true);
     const initialTurn = authoritative().turnNumber!;
     for (let i = 0; authoritative().activeTurnPlayerId === active && i < 30; i++) {

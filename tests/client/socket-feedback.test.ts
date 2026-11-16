@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const { handlers, disconnect, emit } = vi.hoisted(() => ({
-  handlers: new Map<string, (data: any) => void>(), disconnect: vi.fn(), emit: vi.fn(),
-}));
-vi.mock('socket.io-client', () => ({ io: () => ({ on: (event: string, handler: (data: any) => void) => handlers.set(event, handler), disconnect, emit }) }));
+const { handlers, connect, disconnect, emit, transport } = vi.hoisted(() => {
+  const handlers = new Map<string, (data: any) => void>();
+  const connect = vi.fn(), disconnect = vi.fn(), emit = vi.fn();
+  const transport = {
+    on: (event: string, handler: (data: any) => void) => handlers.set(event, handler),
+    connect, disconnect, emit, disconnected: false,
+  };
+  return { handlers, connect, disconnect, emit, transport };
+});
+vi.mock('socket.io-client', () => ({ io: () => transport }));
 import { recoverBoard } from '@client/socket';
 import { useGameStore } from '@client/store/gameStore';
 import { clientLogger } from '@client/logger';
@@ -73,6 +79,8 @@ describe('board snapshot recovery', () => {
 
   beforeEach(() => {
     emit.mockClear();
+    connect.mockClear();
+    transport.disconnected = false;
     const state = useGameStore.getState();
     state.setRoomId('room');
     state.setMyPlayerId('player1');
@@ -101,6 +109,49 @@ describe('board snapshot recovery', () => {
     sendSnapshot(4);
     expect(useGameStore.getState()).toMatchObject({ roomSync: 'live', lastSeq: 5, viewUpdate: 'delta' });
     expect(useGameStore.getState().room?.players.player1.life).toBe(17);
+  });
+
+
+  it('recovers from a malformed delta and ignores old snapshots after moving to a new room', () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(clientLogger, 'warn');
+    sendDelta(2, { changes: [null as unknown as ViewDelta['changes'][number]] });
+    expect(warn).toHaveBeenCalledWith('delta:invalid', expect.any(String), expect.objectContaining({ seq: 2 }));
+    expect(useGameStore.getState()).toMatchObject({ roomSync: 'recovering', lastSeq: 1 });
+    const newRoom = createTestRoom({ roomId: 'new-room' });
+    useGameStore.getState().setRoomId(newRoom.roomId);
+    sendSnapshot(3);
+    sendSnapshot(0, newRoom);
+    vi.advanceTimersByTime(5000);
+    expect(useGameStore.getState()).toMatchObject({ roomSync: 'live', lastSeq: 0, roomId: newRoom.roomId });
+  });
+
+  it('reconnects for a known room before requesting a snapshot over the socket', () => {
+    transport.disconnected = true;
+    recoverBoard();
+    expect(connect).toHaveBeenCalledOnce();
+    expect(emit).not.toHaveBeenCalled();
+    transport.disconnected = false;
+    recoverBoard();
+    expect(emit).toHaveBeenCalledExactlyOnceWith('requestRoomSnapshot', { protocolVersion: 1, roomId: 'room' });
+  });
+
+
+  it('requests at most one fresh snapshot and leaves the connection alone when no room is active', () => {
+    vi.useFakeTimers();
+    recoverBoard(3);
+    recoverBoard(4);
+    expect(emit).toHaveBeenCalledOnce();
+    sendSnapshot(3);
+    expect(useGameStore.getState()).toMatchObject({ roomSync: 'recovering', lastSeq: 1 });
+    sendSnapshot(4);
+    expect(useGameStore.getState()).toMatchObject({ roomSync: 'live', lastSeq: 4 });
+    useGameStore.getState().clearSession();
+    transport.disconnected = true;
+    recoverBoard();
+    vi.advanceTimersByTime(5000);
+    expect(emit).toHaveBeenCalledOnce();
+    expect(connect).not.toHaveBeenCalled();
   });
 
   it('allows retry after a timeout and treats a reconnect snapshot as a fresh baseline', () => {

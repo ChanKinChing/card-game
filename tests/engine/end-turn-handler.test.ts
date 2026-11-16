@@ -42,8 +42,8 @@ describe('endTurnHandler', () => {
       }
     });
 
-    it('should reject ending the turn during RPS phase', () => {
-      room.status = 'RPS';
+    it('should reject ending the turn before the match starts', () => {
+      room.status = 'waiting';
       const result = endTurnHandler.validate(room, 'player1', {});
       expect(result.success).toBe(false);
     });

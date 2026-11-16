@@ -5,7 +5,7 @@ import { captureSourceInformation } from '@engine/source-information';
 import { gameReducer } from '@engine/game-reducer';
 import { GameEngine } from '@engine/game-engine';
 import { planProposedMutations, resumeProposedChoice } from '@engine/proposed-events';
-import { registerReplacementOperation } from '@engine/replacement-rules';
+import { canPayLife, registerReplacementOperation } from '@engine/replacement-rules';
 import type { GameRoom } from '@shared/game.room.types';
 import type { GameMutation } from '@shared/game-mutation.types';
 import type { ReplacementDefinition } from '@shared/proposed-event.types';
@@ -25,6 +25,24 @@ function damage(room: GameRoom, amount = 5): GameMutation {
 const apply = (room: GameRoom, mutations: GameMutation[]) => mutations.reduce(gameReducer, room);
 
 describe('proposed event replacement decisions', () => {
+  it('keeps a life payment whole, respects its recipient, and stops protecting after combat', () => {
+    const rule: ReplacementDefinition = {
+      id: 'combat-floor', label: 'Combat floor', duration: 'end_of_combat',
+      match: { kinds: ['life_change'], playerId: 'player1' }, operation: { type: 'limit_life_loss', floor: 5 },
+    };
+    const room = fixture([rule, double]);
+    room.phase = 'endCombatStep';
+    room.players.player1.life = 6;
+    room.players.player2.life = 6;
+    expect(canPayLife(room, 'player1', 2)).toBe(false);
+    expect(canPayLife(room, 'player1', 1)).toBe(true);
+    expect(canPayLife(room, 'player2', 2)).toBe(true);
+    const optional = { ...room, replacementEffects: [{ ...rule, optional: true }] };
+    expect(canPayLife(optional, 'player1', 2)).toBe(true);
+    const pastCombat = { ...room, phase: 'postcombatMainPhase' as const };
+    expect(canPayLife(pastCombat, 'player1', 2)).toBe(true);
+  });
+
   it.each([['double', 13], ['prevent', 16]])('honors affected-player order beginning with %s', (id, life) => {
     const room = fixture([double, prevent]);
     const initial = planProposedMutations(room, [damage(room)]);

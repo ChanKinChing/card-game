@@ -42,8 +42,8 @@ describe('enterBattleHandler', () => {
       }
     });
 
-    it('should reject entering battle during RPS phase', () => {
-      room.status = 'RPS';
+    it('should reject entering battle before the match starts', () => {
+      room.status = 'waiting';
       const result = enterBattleHandler.validate(room, 'player1', {});
       expect(result.success).toBe(false);
     });

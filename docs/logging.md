@@ -179,7 +179,7 @@ The engine publishes game events after a mutation batch has been applied. `drain
 
 Each event has an `eventUuid`, `batchId` and optional `commandId`. Trigger batches carry the originating event IDs, and state-based-action batches reference their parent batch. Resolution reports are published only when their stack object was actually removed. Rejected commands produce a contextual `command:rejected` diagnostic and no committed batch.
 
-`SyncService` records batch metadata and event payloads alongside patches in `data/deltas.jsonl`. Full before/after rooms are omitted. Player deltas omit the internal event timeline and retain the command ID for correlation. `replay()` reads records; this remains a debug timeline, not complete game restoration: setup baselines and durable restart sequencing are separate work.
+`SyncService` records batch metadata and event payloads alongside patches in `data/deltas.jsonl`. Full before/after rooms are omitted. Player deltas omit the internal event timeline and retain the command ID for correlation. `replay()` reads records; this remains a debug timeline, not complete game restoration: the [SQLite match journal](match-recovery.md) handles startup recovery.
 
 ### Known limits of the delta log
 

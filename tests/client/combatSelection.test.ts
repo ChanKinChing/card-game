@@ -44,6 +44,7 @@ describe('reconcileCombatSelection', () => {
     card.state.summoningSickness = false;
     card.state.attackedThisTurn = false;
     room.battlefield.push(card);
+    room.legalActions = { actions: ['concede'], combat: { actionId: 'declare_attackers', attackerUuids: [card.uuid] } };
 
     const selection: CombatSelection = {
       attackers: [card.uuid],
@@ -107,6 +108,7 @@ describe('reconcileCombatSelection', () => {
     card.state.summoningSickness = false;
     card.state.attackedThisTurn = false;
     room.battlefield.push(card);
+    room.legalActions = { actions: ['concede'], combat: { actionId: 'declare_attackers', attackerUuids: [card.uuid] } };
 
     const selection: CombatSelection = {
       attackers: [card.uuid],

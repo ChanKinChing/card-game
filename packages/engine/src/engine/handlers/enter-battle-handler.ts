@@ -9,14 +9,13 @@ import type { StackObject } from '../../types/effect.types';
  * This is a direct action with no stack object. The player command descriptor
  * passes priority after validation; the opponent can respond before combat.
  *
- * Validation blocks RPS, a non-empty stack, non-turn players, and any phase
+ * Validation blocks non-playing rooms, a non-empty stack, non-turn players, and any phase
  * other than the main phase.
  */
 export const enterBattleHandler: ActionHandler = {
   validate(room: GameRoom, playerId: PlayerId, _action: ActionData): ActionResult {
-    // Guard: the game must be past the opening RPS phase.
-    if (room.status === 'RPS') {
-      return { success: false, phase: 'validate', reason: 'Cannot enter battle during Rock Paper Scissors phase!' };
+    if (room.status !== 'playing') {
+      return { success: false, phase: 'validate', reason: 'Match has not started or is already over' };
     }
 
     // Guard: combat cannot start while anything is still waiting to resolve.

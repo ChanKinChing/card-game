@@ -28,7 +28,7 @@ describe('pending choice controls', () => {
   it('carries explicit payment from the existing spell option into local targeting', () => {
     const room = createTestRoom(); const card = room.players.player1.hand[0];
     card.targetGroups.cast_spell = [{ id: 'effect-0', targeting: { type: 'player', required: true }, legalTargets: [{ targetType: 'player', playerId: 'player2' }] }];
-    useGameStore.setState({ room, roomId: 'room', myPlayerId: 'player1', targeting: null, contextMenu: { x: 0, y: 0, cardUuid: card.uuid, zone: 'hand', options: [{ actionId: 'cast_spell', label: 'Cast spell' }] } });
+    useGameStore.setState({ room, roomId: 'room', myPlayerId: 'player1', targeting: null, contextMenu: { x: 0, y: 0, cardUuid: card.uuid, zone: 'hand', options: [{ actionId: 'cast_spell', label: 'Cast spell', nextInput: 'targets' }] } });
     let tree!: ReactElement<any>;
     renderToStaticMarkup(createElement(() => { tree = ContextMenu()!; return null; }));
     const menu = tree.props.children;

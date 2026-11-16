@@ -11,6 +11,7 @@ function setup() {
   const store = new InMemoryStore(), published = vi.fn(), destroyed = vi.fn();
   const runtime = new RoomRuntime(store, { publishDelta: published, roomDestroyed: destroyed }); runtimes.push(runtime);
   const created = runtime.createRoom('s1', 'p1'); runtime.joinRoom('s2', 'p2', created.roomId);
+  runtime.submitRps('s1', created.roomId, 'rock'); runtime.submitRps('s2', created.roomId, 'rock');
   return { store, runtime, published, destroyed, id: created.roomId };
 }
 describe('explicit room exit', () => {

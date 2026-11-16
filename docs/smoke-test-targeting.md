@@ -8,7 +8,7 @@ Verifies the end-to-end tap-based targeting flow: cast a spell → tap a legal t
 2. Start the client: `npm run dev:client`
 3. Open two browser tabs to the client URL.
 4. Create a room in tab 1, join it in tab 2.
-5. Play RPS to start the game (both players play a card).
+5. Start the game using the Rock, Paper, Scissors lobby buttons.
 
 ## Scenario: Cast 破裂火球 (broken-fireball) targeting the opponent player
 

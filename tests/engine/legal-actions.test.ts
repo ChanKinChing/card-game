@@ -166,7 +166,7 @@ describe('pure non-pass action availability', () => {
   ('never reports none outside a safe priority window (%s)', gate => {
     const state = room();
     if (gate === 'priority') state.priorityPlayerId = 'player2';
-    if (gate === 'status') state.status = 'RPS';
+    if (gate === 'status') state.status = 'waiting';
     if (gate === 'outcome') state.outcome = { type: 'win', winnerId: 'player2', losses: [] };
     if (gate === 'choice') state.pendingChoice = { kind: 'number', id: 'n', playerId: 'player1', prompt: 'X', range: { min: 0 },
       continuation: { type: 'action', actionId: 'cast_spell', field: 'numericBindings', data: {} } };

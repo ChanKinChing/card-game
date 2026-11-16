@@ -5,6 +5,7 @@ import { publicAbilityId } from './wire-identifiers';
 export function projectActionOptions(options: readonly ActionOption[], roomId: string, viewerId: string): ActionOption[] {
   return options.map(option => ({
     actionId: option.actionId, label: option.actionId === 'activate_ability' ? option.label.split('@')[0] : option.label,
+    ...(option.nextInput ? { nextInput: option.nextInput } : {}),
     ...(option.description !== undefined ? { description: option.description } : {}),
     ...(option.disabled !== undefined ? { disabled: option.disabled } : {}),
     ...(option.disabledReason !== undefined ? { disabledReason: option.disabledReason } : {}),

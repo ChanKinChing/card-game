@@ -27,7 +27,6 @@ export const ACTION_IDS = {
   endTurn: 'end_turn',
   passPriority: 'pass_priority',
   resolveStack: 'resolve_stack',
-  rpsPlay: 'rpsPlay',
 } as const;
 
 /** Union of the known action IDs — a closed set. */
@@ -53,5 +52,9 @@ export const ACTION_ID_LABELS: Record<ActionId, string> = {
   [ACTION_IDS.endTurn]: 'End turn',
   [ACTION_IDS.passPriority]: 'Pass priority',
   [ACTION_IDS.resolveStack]: 'Resolve stack',
-  [ACTION_IDS.rpsPlay]: 'RPS play',
 };
+
+/** Candidates for a combat declaration; the engine validates the complete assignment. */
+export type CombatDeclarationInput =
+  | { actionId: 'declare_attackers'; attackerUuids: string[] }
+  | { actionId: 'declare_blockers'; attackerUuids: string[]; blockerUuids: string[] };

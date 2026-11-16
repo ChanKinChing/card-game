@@ -91,7 +91,7 @@ describe('short real lab HTTP/socket acceptance', () => {
     });
     afterEach(async () => { vi.restoreAllMocks(); sockets.splice(0).forEach(s => s.disconnect()); await new Promise<void>(resolve => app.io.close(() => resolve())); });
     const req = async (path: string, method = 'GET', body?: unknown, token: string | undefined = admin?.token) => fetch(url + path, { method, headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
-    const save = async () => { const r = await req('/api/admin/scenarios', 'POST', { protocolVersion: 1, scenario: setup() }); expect(r.status).toBe(200); return (await r.json()).record; };
+    const save = async (scenario = setup()) => { const r = await req('/api/admin/scenarios', 'POST', { protocolVersion: 1, scenario }); expect(r.status).toBe(200); return (await r.json()).record; };
     const launch = async (record: any) => { const r = await req('/api/admin/scenarios/' + record.id + '/launch', 'POST', { protocolVersion: 1, expectedRevision: record.revision, participants: [one.account!.id, two.account!.id] }); expect(r.status).toBe(200); return (await r.json()).run; };
     function once(socket: Socket, event: string) { return new Promise<any>((resolve, reject) => { const timer = setTimeout(() => { socket.off(event, listener); reject(new Error('Timed out ' + event)); }, 2000); const listener = (v: any) => { clearTimeout(timer); resolve(v); }; socket.once(event, listener); }); }
     async function connect(session: AuthResponse, roomId: string) { const socket = io(url, { transports: ['websocket'], autoConnect: false, reconnection: false, auth: { protocolVersion: 1, token: session.token, roomId } }); sockets.push(socket); const snapshot = once(socket, 'roomSnapshot'); socket.connect(); return { socket, snapshot: await snapshot }; }
@@ -128,6 +128,81 @@ describe('short real lab HTTP/socket acceptance', () => {
         const actions = app.store.audit.pendingAudit(1000).map(r => r.action);
         expect(actions).toEqual(expect.arrayContaining(['scenario.create', 'scenario.launch', 'scenario.update', 'scenario.reset', 'scenario.export']));
     });
+    it('discovers and executes ordinary player commands and staged inputs through assigned Test Lab seats', async () => {
+        const scenario = setup();
+        scenario.players[0].hand[0].quantity = 2;
+        const run = await launch(await save(scenario));
+        for (const session of [one, two])
+            expect((await req('/api/lab/rooms/' + run.roomId + '/claim', 'POST', { protocolVersion: 1 }, session.token)).status).toBe(200);
+        const a = await connect(one, run.roomId), b = await connect(two, run.roomId);
+        const packet = (actionId: string, data: Record<string, unknown> = {}) =>
+            ({ protocolVersion: 1, roomId: run.roomId, actionId, ...data });
+        const inspect = (actor: typeof a, actionId: string, data?: Record<string, unknown>) =>
+            actor.socket.timeout(2000).emitWithAck('inspectPlayerAction', packet(actionId, data));
+        a.socket.emit('inspectPlayerAction', packet('pass_priority'));
+        expect(await a.socket.timeout(2000).emitWithAck('inspectPlayerAction', { ...packet('pass_priority'), protocolVersion: 0 }))
+            .toMatchObject({ kind: 'unavailable', reason: 'Invalid player action packet' });
+        expect(await a.socket.timeout(2000).emitWithAck('inspectPlayerAction', { ...packet('pass_priority'), roomId: randomUUID() }))
+            .toMatchObject({ kind: 'unavailable', reason: 'This socket is not seated in that room' });
+        const observer = io(url, { transports: ['websocket'], autoConnect: false, reconnection: false,
+            auth: { protocolVersion: 1, token: other.token } });
+        sockets.push(observer);
+        const observerReady = once(observer, 'sessionReady');
+        observer.connect();
+        await observerReady;
+        expect(await observer.timeout(2000).emitWithAck('inspectPlayerAction', packet('pass_priority')))
+            .toMatchObject({ kind: 'unavailable', reason: 'This socket is not seated in that room' });
+        const snapshot = once(a.socket, 'roomSnapshot');
+        a.socket.emit('requestRoomSnapshot', { protocolVersion: 0, roomId: run.roomId });
+        a.socket.emit('requestRoomSnapshot', { protocolVersion: 1, roomId: run.roomId });
+        expect(await snapshot).toMatchObject({ room: { viewerId: a.snapshot.room.viewerId, roomId: run.roomId }, seq: a.snapshot.seq });
+        const submit = async (actionId: string, data?: Record<string, unknown>) => {
+            const delta = once(a.socket, 'stateDelta');
+            a.socket.emit('playerAction', packet(actionId, data));
+            return delta;
+        };
+        const choiceFrom = (delta: any) => delta.changes.find((entry: any) => entry.path === 'pendingChoice')?.value;
+        const playerId = a.snapshot.room.viewerId;
+        const hand = a.snapshot.room.players[playerId].hand;
+        const land = hand.find((card: any) => card.definitionId === 'land-red');
+        const spell = hand.find((card: any) => card.definitionId === 'choice-practice');
+        expect(spell.actions[0]).toMatchObject({ actionId: 'cast_spell', nextInput: 'number' });
+        const playLand = { cardUuid: land.uuid, zoneRevision: land.state.zoneRevision };
+        expect(await inspect(a, 'play_land', playLand)).toMatchObject({ kind: 'ready' });
+        expect(await inspect(b, 'play_land', playLand)).toMatchObject({ kind: 'unavailable' });
+        const played = await submit('play_land', playLand);
+        const mana = played.changes.find((entry: any) => entry.path === 'battlefield').value[0].actions
+            .find((option: any) => option.actionId === 'tapForMana');
+        const activate = { cardUuid: land.uuid, ...mana.data };
+        expect(await inspect(a, 'tapForMana', activate)).toMatchObject({ kind: 'ready' });
+        await submit('tapForMana', activate);
+
+        const cast = { cardUuid: spell.uuid };
+        expect(await inspect(a, 'cast_spell', cast)).toMatchObject({
+            kind: 'input', stage: 'preview', choice: { kind: 'number', range: { min: 0, max: 4 }, id: '' },
+        });
+        expect(app.store.getRoom(run.roomId)!.pendingChoice).toBeFalsy();
+        const number = choiceFrom(await submit('cast_spell', cast));
+        expect(await inspect(a, 'choose')).toMatchObject({ kind: 'input', stage: 'pending', choice: number });
+        expect(await inspect(b, 'choose')).toMatchObject({ kind: 'unavailable' });
+        expect(await inspect(a, 'choose', { choiceId: number.id, number: 2 })).toMatchObject({
+            kind: 'input', stage: 'preview', choice: { kind: 'options', id: '' },
+        });
+        const route = choiceFrom(await submit('choose', { choiceId: number.id, number: 2 }));
+        const life = route.options.find((option: any) => option.label.startsWith('Pay life'));
+        expect(await inspect(a, 'choose', { choiceId: route.id, choices: ['alternative:life'] })).toMatchObject({ kind: 'unavailable' });
+        const target = choiceFrom(await submit('choose', { choiceId: route.id, choices: [life.id] }));
+        expect(target.options).toEqual([{ id: expect.any(String), label: 'Opponent' }]);
+        const discard = choiceFrom(await submit('choose', { choiceId: target.id, choices: [target.options[0].id] }));
+        expect(discard.kind).toBe('discard');
+        const answer = { choiceId: discard.id, choices: [discard.options[0].id] };
+        expect(await inspect(a, 'choose', answer)).toMatchObject({ kind: 'ready' });
+        const completed = await submit('choose', answer);
+        expect(choiceFrom(completed)).toBeNull();
+        expect(app.store.getRoom(run.roomId)!.stack[0]?.numericBindings).toEqual({ X: 2 });
+        expect(app.store.getRoom(run.roomId)!.players[playerId].life).toBe(15);
+    });
+
     it('requires current admin scope, capability, canonical IDs and bounded strict requests', async () => {
         for (const token of ['', one.token, other.token])
             expect((await req('/api/admin/scenarios', 'GET', undefined, token)).status).toBe(token ? 403 : 401);

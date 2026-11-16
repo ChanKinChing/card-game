@@ -164,9 +164,10 @@ describe('Milestone 6 public browser families and tab ownership', () => {
       });
       socket.emit('playerAction', { protocolVersion: 1, roomId, commandId, actionId, ...data }); await result;
     }
-    for (const [session, socket] of [[a, p1], [b, p2]] as const) {
-      const rock = room().players[session.playerId].hand.find(card => card.blueprint.id === 'rock')!; await action(socket, 'rpsPlay', { cardUuid: rock.uuid });
-    }
+    p1.emit('submitRps', { protocolVersion: 1, roomId, pick: 'rock' });
+    await vi.waitFor(() => expect(application.runtime.lobbyView(roomId, a.playerId)?.myPick).toBe('rock'));
+    p2.emit('submitRps', { protocolVersion: 1, roomId, pick: 'rock' });
+    await vi.waitFor(() => expect(room().status).toBe('playing'));
     expect(room().status).toBe('playing');
     const actor = () => room().priorityPlayerId === a.playerId ? p1 : p2;
     for (let i = 0; room().phase !== 'stateMainPhase' && i < 12; i++) await action(actor(), 'pass_priority');

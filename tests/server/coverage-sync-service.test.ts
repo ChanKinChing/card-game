@@ -3,6 +3,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { SyncService, getAtPath, cardStatePath, type StateDelta, type DeltaChange } from '@server/rooms/sync-service';
+import { gameReducer } from '@engine/game-reducer';
+import { buildPlayerView } from '@server/projection/view-builder';
+import { applyDeltaChanges } from '@client/store/deltaReducer';
 import { createTestRoom } from '../helpers/test-room-factory';
 import { creature } from '../helpers/combat-fixture';
 import { instantiateCard } from '@library/card-factory';
@@ -102,6 +105,73 @@ describe('SyncService coverage — mutation mapping', () => {
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
+  });
+
+
+  it('journals hosted card storage and release while hiding the stored face from the other seat', () => {
+    const host = creature('host', P1);
+    const room = createTestRoom({ battlefield: [host] });
+    const card = room.players[P1].hand[0];
+    const hostRef = { cardUuid: host.uuid, zoneRevision: 0 };
+    const store: GameMutation = {
+      type: 'MOVE_CARD', cardUuid: card.uuid, playerId: P1, from: 'hand', to: 'hosted',
+      toHost: { host: hostRef, visibility: 'owner' },
+    };
+    const stored = gameReducer(room, store);
+    const first = run(room, [store]);
+    expect(find(first, 'players.player1.hosted[0]')).toMatchObject({ op: 'add', value: { uuid: card.uuid } });
+    const hostChanges = service.filterForPlayer(first, P1, stored);
+    expect(hostChanges.changes.find(change => change.path === 'hostedCards')?.value)
+      .toMatchObject([{ hostUuid: host.uuid, cards: [{ uuid: card.uuid }] }]);
+    expect(JSON.stringify(service.filterForPlayer(first, P2, stored))).not.toContain(card.uuid);
+
+    const release: GameMutation = {
+      type: 'MOVE_CARD', cardUuid: card.uuid, playerId: P1, from: 'hosted', to: 'graveyard', fromHost: hostRef,
+    };
+    const released = gameReducer(stored, release);
+    const second = run(stored, [release]);
+    expect(find(second, 'players.player1.hosted[0]')).toMatchObject({ op: 'remove', oldValue: { uuid: card.uuid } });
+    const publicRelease = service.filterForPlayer(second, P2, released);
+    const clientAfter = applyDeltaChanges(buildPlayerView(stored, P2), publicRelease.changes);
+    expect(clientAfter.players[P1].graveyard.map(value => value.uuid)).toEqual([card.uuid]);
+  });
+
+  it('ignores stale target changes and sends a legal replacement while retaining the other target', () => {
+    const permanent = (cardUuid: string) => ({ targetType: 'permanent', cardUuid, zone: 'battlefield', zoneRevision: 0 } as const);
+    const old = permanent('old'), other = permanent('other'), replacement = permanent('new');
+    const caster = cardInZone('source', P2, 'stack');
+    const object = { ...spell('stack-object', caster), targetGroups: [
+      { id: 'permanents', targeting: { type: 'permanent' as const, required: true }, targets: [old, other] },
+    ] };
+    const room = createTestRoom({ battlefield: ['old', 'other', 'new'].map(uuid => creature(uuid, P1)), stack: [object] });
+    const redirect: Extract<GameMutation, { type: 'RETARGET_STACK' }> = {
+      type: 'RETARGET_STACK', stackUuid: object.uuid, groupId: 'permanents', from: old, to: replacement,
+    };
+    expect(run(room, [{ ...redirect, stackUuid: 'finished' }, { ...redirect, from: { ...old, zoneRevision: 2 } }]).changes)
+      .toEqual([]);
+    const countered = { ...room, stack: [{ ...object, countered: true }] };
+    expect(run(countered, [redirect]).changes).toEqual([]);
+    const next = run(room, [redirect]);
+    expect(find(next, 'stack')?.value).toMatchObject([{ targetGroups: [{ targets: [replacement, other] }] }]);
+  });
+
+  it('journals the remaining attackers and expires only combat-scoped replacement effects', () => {
+    const attacking = creature('attacking', P1), canceled = creature('canceled', P1), spectator = creature('spectator', P1);
+    const combat = [attacking, canceled].map(attacker =>
+      ({ uuid: attacker.uuid, attacker, attackerPower: 2, blockers: [] }));
+    const endOfCombat = { id: 'combat-floor', label: 'Combat floor', duration: 'end_of_combat' as const,
+      operation: { type: 'limit_life_loss' as const, floor: 1 } };
+    const persistent = { ...endOfCombat, id: 'persistent-floor', duration: 'permanent' as const };
+    const room = createTestRoom({
+      battlefield: [attacking, canceled, spectator], combat, replacementEffects: [endOfCombat, persistent],
+    });
+    const cancel: Extract<GameMutation, { type: 'CANCEL_ATTACKER' }> = {
+      type: 'CANCEL_ATTACKER', cardUuid: canceled.uuid, zoneRevision: 0,
+    };
+    expect(run(room, [{ ...cancel, zoneRevision: 1 }, { ...cancel, cardUuid: spectator.uuid }]).changes).toEqual([]);
+    const next = run(room, [cancel, { type: 'CLEAR_COMBAT' }]);
+    expect(find(next, 'combat')?.value).toMatchObject([{ uuid: attacking.uuid }]);
+    expect(find(next, 'replacementEffects')?.value).toEqual([persistent]);
   });
 
   it('maps token creation to the battlefield array and token sequence', () => {
@@ -630,7 +700,7 @@ describe('SyncService coverage — mutation mapping', () => {
 
   it('maps status, engine state and pending choice mutations', () => {
     const room = createTestRoom();
-    expect(find(run(room, [{ type: 'SET_STATUS', status: 'RPS' }]), 'status')?.value).toBe('RPS');
+    expect(find(run(room, [{ type: 'SET_STATUS', status: 'waiting' }]), 'status')?.value).toBe('waiting');
     expect(find(run(room, [{ type: 'SET_ENGINE_STATE', state: 'resolving_stack' }]), 'engineState')?.value).toBe('resolving_stack');
     expect(find(run(room, [{ type: 'SET_PENDING_CHOICE', choice: null }]), 'pendingChoice')).toMatchObject({ op: 'update', value: null });
   });
@@ -690,12 +760,10 @@ describe('SyncService coverage — mutation mapping', () => {
     expect(find(advance, 'turnHistory')).toBeDefined();
   });
 
-  it('maps priority, last-passed and RPS mutations', () => {
+  it('maps priority, and last-passed mutations', () => {
     const room = createTestRoom();
     expect(find(run(room, [{ type: 'SET_PRIORITY', playerId: null }]), 'priorityPlayerId')).toMatchObject({ op: 'update', value: null });
     expect(find(run(room, [{ type: 'SET_LAST_PASSED', playerId: P2 }]), 'lastPassedPlayerId')?.value).toBe(P2);
-    expect(find(run(room, [{ type: 'SET_RPS_STATUS', status: 'waiting' }]), 'rpsState.status')?.value).toBe('waiting');
-    expect(find(run(room, [{ type: 'SET_RPS_PLAYED_CARD', playerId: P1, card: 'rock' }]), `rpsState.playedCards.${P1}`)?.value).toBe('rock');
   });
 });
 

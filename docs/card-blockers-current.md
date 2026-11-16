@@ -37,21 +37,23 @@ These shared consumers now have focused proofs. A dependent card still needs a c
 
 ## Current coverage
 
-The explicit manifest contains **162 definitions**. The six included sheets have **142 named rows**, **136 with registered name matches** and **6 without a definition**. The owner deferred all six outstanding rows or a required ability on those rows. The labels overlap, so they must not be added as mutually exclusive engine-blocker totals.
+The explicit manifest contains **159 definitions**. The six included sheets have **142 named rows**, **136 with registered name matches** and **6 without a definition**. The owner deferred all six outstanding rows or a required ability on those rows. The labels overlap, so they must not be added as mutually exclusive engine-blocker totals.
 
-| Sheet | Named rows | Registered matches | No definition | Confirmed U | Deferred |
+| Sheet | Named rows | Registered matches | No definition | With gameplay evidence | Deferred |
 |---|---:|---:|---:|---:|---:|
-| 炎獸 | 24 | 24 | 0 | 0 | 0 |
-| 幻影木偶 | 23 | 23 | 0 | 0 | 0 |
-| 風獸 | 23 | 22 | 1 | 0 | 1 |
-| 冰龍 | 25 | 22 | 3 | 0 | 3 |
-| 上使 | 23 | 21 | 2 | 0 | 2 |
-| 蒼巨人 | 24 | 24 | 0 | 0 | 0 |
-| **Total** | **142** | **136** | **6** | **0** | **6** |
+| 炎獸 | 24 | 24 | 0 | 24 | 0 |
+| 幻影木偶 | 23 | 23 | 0 | 23 | 0 |
+| 風獸 | 23 | 22 | 1 | 22 | 1 |
+| 冰龍 | 25 | 22 | 3 | 22 | 3 |
+| 上使 | 23 | 21 | 2 | 21 | 2 |
+| 蒼巨人 | 24 | 24 | 0 | 24 | 0 |
+| **Total** | **142** | **136** | **6** | **136** | **6** |
 
 Matching uses NFKC normalization and ignores whitespace and asterisks; source row numbers remain workbook row numbers. Only JSON imports explicitly listed in `cards/index.ts` count. Untracked duplicate files and excluded-sheet rows do not inflate coverage.
 
-## Delivered unblockers and their limits
+The [starter fidelity audit](starter-card-fidelity.md) maps the workbook clauses under review to evidence from real-card tests.
+
+## Earlier unblockers and their original limits
 
 | Delivered capability | Now removes | Does not remove |
 |---|---|---|
@@ -78,9 +80,11 @@ Accepted rulings remain: 兵 is generic for now; unqualified life reduction is p
 
 The [counter rule schema](counter-rules.md) now gives marked cards intrinsic effects through the existing modifier, attachment, and trigger consumers. Aurora prevents up to three damage once per battlefield incarnation. Frost gear caps at one per card and grants the equipped creature an attack draw. Focused engine checks cover recipient ownership, removing and reapplying Aurora, spent uses across turns and reload, and equipment reattachment. The remaining statuses include full card recipes and their other mechanic dependencies.
 
-## Remaining capability families
+## Original capability dependencies
 
-| Code | Missing capability or decision boundary |
+This table records the original capability families. The later delivery sections and each deferred card row record their current implementation and ruling status.
+
+| Code | Original dependency |
 |---|---|
 | COST | Broader mana substitution rules. A revealed card can already spend one allowed color as its own colors. |
 | VALUE | Selected-result-card fields and collection sums |
@@ -158,14 +162,14 @@ The [60-card blue example](decks/blue-giant-workbook.json) uses 24 lands and 36 
 
 ## Gaps in registered cards and format policy
 
-The 136 registered matches are not a second list of fully faithful cards. Existing gaps remain visible here:
+The [starter fidelity audit](starter-card-fidelity.md) records gameplay evidence for the 136 registered matches under the currently supported profile. The following format and out-of-scope differences still apply.
 
 - **Copy policy resolved:** all six basic lands are repeatable. 血炎山 already used the unlimited `land-red` definition; the five other missing unlimited mappings are now configured. 幻影魔城/諸界海 are singleton and the newly registered 幻影木偶 allows twenty copies, through the shared config/validator.
 - **Relic Scorch resolved.** Opposing creatures and non-equipment artifacts can receive Scorch. Creatures use effective attack plus maximum life. Relics use the effective mana value described in the workbook Q&A. An unresolved variable mana value has no fixed threshold. The focused tests cover eligibility, cost changes and the normal destruction pipeline.
 - **Excluded dual lands:** six registered dual lands use an entry-tap trigger rather than atomic tapped entry. They belong to the excluded supplement, so the audit records the fidelity gap without silently widening implementation scope.
-- **Workbook format:** the workbook describes default three copies, at least sixty cards without an upper limit, and opening-seven/mulligan behavior. The current standard profile uses four copies and 60–250 cards; opening/setup rules are configured separately. Profile/setup alignment is separate work, not solved by registering definitions. U above is relative to the supported profile, not a claim that global workbook rules have been migrated.
+- **Workbook format:** the workbook describes default three copies, at least sixty cards without an upper limit, and opening-seven/mulligan behavior. The current standard profile uses four copies and 60–250 cards; opening/setup rules are configured separately. Profile/setup alignment is separate work, not solved by registering definitions. The gameplay evidence above uses the supported profile.
 
-A complete fidelity certification of the 136 registered matches is outside this missing-row audit. The historical inventory records their source text and coverage; the gaps above prevent interpreting coverage as a fidelity percentage.
+The historical inventory records workbook source text and registration coverage. The starter fidelity audit records the card-specific gameplay evidence and owner-approved variations.
 
 ## Current combat and outcome delivery
 
@@ -191,11 +195,11 @@ The existing result source now supports a named selected subset and exact exclus
 - **亞拉里亞的終末** pays by exiling a controlled emperor with at least five charge counters. A cancelled or redirected move leaves the entire payment unsettled. The spell records one committed cast per physical copy per match.
 - **天使女帝 蝶后** discards its exact hand incarnation on allied life loss and heals five after a successful discard. On the battlefield it adds two to healing from allied sources. Setting a life total to an exact value stays separate from healing.
 - **幻影木偶智者** has mana value three in the graveyard. Its attack-phase bonus applies once per recipient for the controller, even with multiple eligible Sages.
-- **赫拉的營寨** treats enemy life loss, damage to an enemy creature, and a reduction in an enemy creature's maximum life as one shared once-per-turn draw. The tap ability has its own cost.
-- **赫拉幻影術** uses printed type, subtype and mana cost to choose from the controller's graveyard. Its mana-value limit is below four, raised to below six during its controller's main phase.
-- **冰龍呼喚** takes one eligible card from each reveal and orders the remainder. An Ice Dragon creature on either side adds exactly one extra reveal of the new top three cards.
+- **赫拉的營寨** shares one draw per turn across opposing player life loss, damage to an opposing creature, and a decrease to an opposing creature’s maximum life, as confirmed. The tap ability is separate.
+- **赫拉幻影術** uses printed type, subtype and mana value to choose from the controller's graveyard. The confirmed limit is below four, raised to below six during its controller's main phase.
+- **冰龍呼喚** takes one eligible card from each reveal and orders the remainder. A friendly Ice Dragon creature adds one extra reveal of the new top three cards. The card’s displayed text now requires a friendly Ice Dragon and explicitly limits the repeat to once.
 
-The last three entries use the current readings of the workbook wording while those rulings are pending. The [focused logic checks](../tests/engine/nonblue-workbook.test.ts) cover the implemented card behaviors.
+The release ruling for 赫拉幻影術 (幻影木偶 E20) keeps printed mana value. A playtest across all 11 registered 幻影木偶 creatures found two additional targets under the tested current-cost variant. 幻影木偶智者 became eligible in every tested window at graveyard value three. 幻影巨人 became eligible in the caster’s main phase at value four, or in the caster’s combat with five black creatures at value zero. Both have printed value six. In paired combat with five 幻影地界兵 attacking, the printed-cost run dealt five unblocked damage. The current-cost run returned 幻影木偶智者 and dealt ten. With two 天域門衛 blocking and each gaining one life, the defender ended at 19 life with printed cost and 16 with current cost, from 20. The [focused logic checks](../tests/engine/nonblue-workbook.test.ts) cover the release behavior.
 
 ## Life-loss protection and changes to pending effects
 
@@ -215,6 +219,18 @@ Life protection applies to life changes after damage, so several damage assignme
 
 **幻影魔神 赫拉尼亞** may return to hand or pay two black mana to summon itself after an effect discards it from hand or deck. Discard costs do not trigger either option. Its summon mills one card and uses the effective mana value recorded after that card’s move to reduce an opposing creature’s maximum life through the end of the turn. [Focused logic tests](../tests/engine/nonblue-workbook.test.ts)
 
-## Remaining shared rules
+## Reusable rules and their starter-card consumers
+
+| Rule | Current implementation and evidence |
+|---|---|
+| Read a card result and sum selected values | 赫拉尼亞 reads the recorded effective mana value of the exact milled card. The two 蒼巨人 Ritual costs sum effective mana values over chosen materials. A general numeric sum over arbitrary card fields is outside these recipes. [Hera Nia](../tests/engine/nonblue-workbook.test.ts), [Ritual materials](../tests/engine/ritual-materials.test.ts) |
+| Dynamic ability limits | An ability can read a numeric limit or waive its cap with a condition, using the same use history throughout. 大酋長里昂 exercises a limit based on cards under its own instance. 天使的皇座's conditional waiver is supported by the shared rule and awaits the card's deferred payment. [Hosted cards and ability usage](card-query-architecture.md#cards-stored-under-a-permanent) |
+| Activation cost modifiers | Activated abilities have their own authored cost and may use conditional or variable amounts where the cost supports them. Cross-card rewriting of activation costs has no confirmed starter-card consumer. The cost changes on 幻影木偶, 幻影巨人, 幻影木偶智者 and 耶夢加得 apply to the card's mana cost. |
+| Selected exile and storage payments | 亞拉里亞的終末 uses atomic selected-exile payment. Move-to-host and exact release work for existing effect consumers. 縛鎖 payment origin and the destination for unreleased cards after a host leaves are deferred for 天域三侯 坡加 and 天使的皇座. [Payment contract](counter-payment-architecture.md), [Deferred cards](#上使) |
+| Bounded reveal repetition | 冰龍呼喚 executes one independent reveal window and adds a second window if the caster controls an Ice Dragon creature. The second reads the new library state after the first window finishes. [Card test](../tests/engine/nonblue-workbook.test.ts#L379) |
+| Combat-scoped protection | 寒巢之主 亞蕾雅 keeps the protection active through the final combat response window. The normal transition out of combat expires it. [Card tests](../tests/engine/nonblue-workbook.test.ts#L446) |
+| Scheduled phase termination | The card asking for it is 極光之壁. The owner deferred the whole card and its phase-ending effect. [Deferred card](#冰龍) |
+| Life floors and zero-life interception | 極光之盾 sets a floor for player life. 巨龍之墓 intercepts a marked creature's zero-life departure, with optional payment, excess damage cleared and restored life capped by its current maximum. [Card tests](../tests/engine/nonblue-workbook.test.ts) |
+| Stack retargeting and ability-source linkage | 冰風守護者 redirects the original target group only when the substitute qualifies. 極光封 and 亞拉里亞的截擊 follow the selected stack object's original source and distinguish its current incarnation from a returned copy. [Source linkage tests](../tests/engine/nonblue-workbook.test.ts#L479), [Retargeting tests](../tests/engine/nonblue-workbook.test.ts#L1738) |
 
 [Host storage and exact release](card-query-architecture.md#cards-stored-under-a-permanent) are implemented for the shared needs of 風靈獸 大酋長里昂, 天域三侯 坡加 and 天使的皇座. The owner deferred 縛鎖 and automatic cleanup after a host leaves. Per-recipient Ice Dragon shields are verified. 巨龍之墓 is registered. It marks two friendly Ice Dragons and can destroy itself to restore an eligible Dragon from zero to three life, capped by its positive maximum life. Excess damage is cleared before recovery. The shared Aurora counter behavior is scheduled for a separate rules review. The owner deferred 極光之壁 as a whole.

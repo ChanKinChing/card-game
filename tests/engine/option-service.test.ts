@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { OptionService, type ActionOption } from '@engine/option-service';
+import { GameEngine } from '@engine/game-engine';
+import { parseCardDefinition } from '@library/card-parser';
 import { createTestRoom } from '../helpers/test-room-factory';
 import { ACTION_IDS } from '@shared/action.ids';
 import type { GameRoom } from '@shared/game.room.types';
@@ -14,6 +16,33 @@ describe('OptionService', () => {
   });
 
   describe('getOptions for hand cards', () => {
+    it('offers a land’s hand ability alongside the land play and accepts the offered command', () => {
+      const card = room.players.player1.hand[0];
+      card.blueprint = parseCardDefinition({
+        schemaVersion: 1, id: 'land-with-hand-action', cardTypes: ['Land'],
+        abilities: [{
+          type: 'activated', id: 'discard-to-heal', allowedZones: ['hand'], castSpeed: 'instant',
+          cost: { discardSelf: true },
+          effect: { action: 'MODIFY_LIFE', params: { amount: 2 }, targeting: { type: 'self', required: false } },
+        }],
+      });
+      const options = service.getOptions(room, 'player1', card.uuid, 'hand');
+      expect(options).toEqual([
+        expect.objectContaining({ actionId: 'play_land', disabled: false }),
+        expect.objectContaining({ actionId: 'activate_ability', disabled: false, data: { abilityId: 'discard-to-heal' } }),
+      ]);
+      const ability = options[1];
+      const engine = new GameEngine(room);
+      try {
+        const command = { cardUuid: card.uuid, ...ability.data };
+        expect(engine.inspectPlayerAction('player1', ability.actionId, command)).toEqual({ kind: 'ready' });
+        expect(engine.executePlayerAction('player1', ability.actionId, command).success).toBe(true);
+        expect(engine.resolveTopOfStack().success).toBe(true);
+        expect(engine.roomState.players.player1.graveyard.map(value => value.uuid)).toEqual([card.uuid]);
+        expect(engine.roomState.players.player1.life).toBe(22);
+      } finally { engine.dispose(); }
+    });
+
     it('should return cast_spell for a card in hand with enough mana', () => {
       const card = room.players['player1'].hand[0];
       card.blueprint = { ...card.blueprint, castRequirements: { ...card.blueprint.castRequirements, cost: { mana: { red: 1 } } } };

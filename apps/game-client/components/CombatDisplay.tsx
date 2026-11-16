@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import { useGameStore, selectIsMyTurn } from '../store/gameStore';
+import { useGameStore } from '../store/gameStore';
 import { battlefieldCardLabel } from '../card-label';
 
 const EMPTY_COMBAT: never[] = [];
@@ -15,16 +15,13 @@ export default function CombatDisplay() {
   const battlefield = useGameStore(useShallow((s) => s.room?.battlefield ?? EMPTY_BATTLEFIELD));
   const combatSelection = useGameStore((s) => s.combatSelection);
   const assignBlocker = useGameStore((s) => s.assignBlocker);
-  const phase = useGameStore((s) => s.room?.phase ?? null);
-  const isMyTurn = useGameStore(selectIsMyTurn);
-  const declarations = useGameStore((s) => s.room?.combatDeclarations);
-  const stackLength = useGameStore((s) => s.room?.stack.length ?? 0);
   const room = useGameStore((s) => s.room);
 
   if (!room || combat.length === 0) return null;
 
-  const isBlockingPhase = phase === 'declareBlockersStep' && !isMyTurn && !declarations?.blockers && stackLength === 0;
-  const hasPendingBlocker = combatSelection.pendingBlocker !== null;
+  const declaration = room.legalActions?.combat;
+  const pending = combatSelection.pendingBlocker;
+  const canAssign = declaration?.actionId === 'declare_blockers' && pending !== null && declaration.blockerUuids.includes(pending);
 
   return (
     <div className="combat-display">
@@ -33,10 +30,10 @@ export default function CombatDisplay() {
         {combat.map((decl) => (
           <li key={decl.uuid}>
             <button
-              disabled={!isBlockingPhase || !hasPendingBlocker}
-              className={`combat-attacker ${isBlockingPhase && hasPendingBlocker ? 'clickable' : ''}`}
+              disabled={!canAssign || !declaration.attackerUuids.includes(decl.uuid)}
+              className={`combat-attacker ${canAssign && declaration.attackerUuids.includes(decl.uuid) ? 'clickable' : ''}`}
               onClick={() => {
-                if (isBlockingPhase && hasPendingBlocker) {
+                if (canAssign && declaration.attackerUuids.includes(decl.uuid)) {
                   assignBlocker(decl.uuid);
                 }
               }}

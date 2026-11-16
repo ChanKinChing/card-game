@@ -21,7 +21,7 @@ damage is dealt in a dedicated combat damage step (not immediately on attack).
 
 - [ ] **Tab A**: Click "Create Room" — note the room ID shown
 - [ ] **Tab B**: Enter the room ID from Tab A, click "Join Room"
-- [ ] **Both tabs**: Play RPS to start the game (both players play a card)
+- [ ] **Both tabs**: Start the game using the Rock, Paper, Scissors lobby buttons
 - [ ] **Winner's tab**: phase shows "Main Phase", hand count is 5 (4 starting + 1 draw)
 
 ## Entering Combat

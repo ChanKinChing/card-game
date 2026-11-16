@@ -75,7 +75,7 @@ describe('continuous creature Scorch threshold', () => {
     expect(engine.drainEventBatches().flatMap(batch => batch.events).some(event => event.eventId === 'PERMANENT_DIED')).toBe(false);
   });
 
-  it('resolves 阿基里斯爪牙 optional entry placement through the real card definition', () => {
+  it.each([true, false])('resolves 阿基里斯爪牙 optional entry placement (accepted: %s)', accept => {
     const { engine } = fixture(true, 1, 1);
     const minion = instantiateCard('achilles-minion');
     minion.state = { ...minion.state, zone: 'hand', ownerId: 'player1', controllerId: 'player1' };
@@ -88,10 +88,10 @@ describe('continuous creature Scorch threshold', () => {
     }
     expect(engine.resolveTopOfStack().success).toBe(true);
     choice = engine.roomState.pendingChoice;
-    if (choice && choice.kind !== 'number') expect(engine.executePlayerAction(choice.playerId, 'choose', { choiceId: choice.id, choices: ['yes'] }).success).toBe(true);
-    expect(engine.roomState.battlefield.find(card => card.uuid === 'scorched-target')?.state.counters.scorch).toBe(1);
+    if (choice && choice.kind !== 'number') expect(engine.executePlayerAction(choice.playerId, 'choose', { choiceId: choice.id, choices: [accept ? 'yes' : 'no'] }).success).toBe(true);
+    expect(engine.roomState.battlefield.find(card => card.uuid === 'scorched-target')?.state.counters.scorch ?? 0).toBe(accept ? 1 : 0);
     add(engine, 1);
-    expect(engine.roomState.players.player2.graveyard.map(card => card.uuid)).toContain('scorched-target');
+    expect(engine.roomState.players.player2.graveyard.some(card => card.uuid === 'scorched-target')).toBe(accept);
   });
 
   it('uses current mana value for relics and excludes equipment from Scorch targeting', () => {
@@ -126,7 +126,7 @@ describe('continuous creature Scorch threshold', () => {
     expect(matchesTargetFilter(target, { type: 'permanent', required: true, counter: { type: 'scorch', max: 0 } }, 'player1', engine.roomState)).toBe(false);
   });
 
-  it.each([false, true])('revalidates 點火狼 against Scorch placed after its target was selected (changed %s)', changed => {
+  it.each(['accept', 'decline', 'stale'] as const)('resolves 點火狼 only when accepted with a still-legal target (%s)', decision => {
     const { engine } = fixture(true, 2, 4);
     const wolf = instantiateCard('ignition-wolf');
     wolf.state = { ...wolf.state, zone: 'hand', ownerId: 'player1', controllerId: 'player1' };
@@ -136,10 +136,18 @@ describe('continuous creature Scorch threshold', () => {
     const choice = engine.roomState.pendingChoice!;
     if (choice.kind === 'number') throw new Error('Expected target choice');
     expect(engine.executePlayerAction(choice.playerId, 'choose', { choiceId: choice.id, choices: [choice.options.find(option => (option.value as { cardUuid?: string }).cardUuid === 'scorched-target')!.id] }).success).toBe(true);
-    if (changed) add(engine, 1);
+    if (decision === 'stale') add(engine, 1);
     expect(engine.resolveTopOfStack().success).toBe(true);
     const optional = engine.roomState.pendingChoice;
-    if (optional && optional.kind !== 'number') expect(engine.executePlayerAction(optional.playerId, 'choose', { choiceId: optional.id, choices: ['yes'] }).success).toBe(true);
-    expect(engine.roomState.battlefield.find(card => card.uuid === 'scorched-target')?.state.counters.scorch).toBe(changed ? 1 : 3);
+    if (decision === 'stale') {
+      expect(optional).toBeFalsy();
+    } else {
+      if (!optional || optional.kind === 'number') throw new Error('Expected optional Scorch placement');
+      expect(engine.executePlayerAction(optional.playerId, 'choose', {
+        choiceId: optional.id, choices: [decision === 'accept' ? 'yes' : 'no'],
+      }).success).toBe(true);
+    }
+    const scorch = engine.roomState.battlefield.find(card => card.uuid === 'scorched-target')?.state.counters.scorch ?? 0;
+    expect(scorch).toBe(decision === 'accept' ? 3 : decision === 'stale' ? 1 : 0);
   });
 });

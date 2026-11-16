@@ -58,6 +58,7 @@ describe('socket identities, exits and disappearance', () => {
     store.deleteRoom(created.roomId);
     expect(runtime.leaveRoom('s1', created.roomId)).toBeUndefined();
     const match = runtime.createRoom('s3', 'p3'); runtime.joinRoom('s4', 'p4', match.roomId);
+    runtime.submitRps('s3', match.roomId, 'rock'); runtime.submitRps('s4', match.roomId, 'rock');
     vi.spyOn(runtime, 'executePlayerAction').mockReturnValue({ kind: 'error', message: 'rejected', action: 'concede', commandId: 'command' });
     expect(runtime.leaveRoom('s3', match.roomId)).toBeUndefined();
     expect(runtime.currentRoom('s3')).toBe(match.roomId);
@@ -67,6 +68,7 @@ describe('socket identities, exits and disappearance', () => {
     vi.useFakeTimers();
     const { store, runtime, destroyed } = setup(), created = runtime.createRoom('s1', 'p1');
     runtime.joinRoom('s2', 'p2', created.roomId);
+    runtime.submitRps('s1', created.roomId, 'rock'); runtime.submitRps('s2', created.roomId, 'rock');
     runtime.disconnect('s2');
     expect(runtime.leaveRoom('s1', created.roomId)).toEqual({ playerId: 'p1' });
     expect(store.getRoom(created.roomId)).toBeDefined();

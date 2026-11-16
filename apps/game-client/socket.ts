@@ -126,7 +126,7 @@ socket.on('roomSnapshot', (data: SnapshotMessage) => {
       !Number.isSafeInteger(data.seq) || data.seq < state.lastSeq) return;
   if (recovery?.roomId === data.room.roomId && data.seq < recovery.minimumSeq) return;
   clearRecovery();
-  state.setRoom(data.room, data.seq, data.testContext);
+  state.setRoom(data.room, data.seq, data.testContext, data.lobbyRps);
 });
 
 socket.on('roomJoined', (data: { roomId: string }) => {
@@ -171,14 +171,13 @@ socket.on('playerJoined', (data: { playerId: string }) => {
   clientLogger.info('opponent:joined', 'Opponent joined', { opponentId: data.playerId });
 });
 
-socket.on('rpsPhase', (data: { message: string }) => {
+socket.on('startGame', data => {
   if (!isProtocolMessage(data)) return;
-  clientLogger.info('rps:phase', data.message);
-});
-
-socket.on('startGame', (data: { roomId: string }) => {
-  if (!isProtocolMessage(data)) return;
-  clientLogger.info('game:started', 'Game started', { roomId: data.roomId });
+  const state = useGameStore.getState();
+  if (state.room?.roomId === data.roomId && state.room.status === 'playing' && data.picks?.length === 2) {
+    useGameStore.setState({ openingResult: { firstPlayerId: data.firstPlayerId, picks: data.picks } });
+  }
+  clientLogger.info('game:started', 'Game started', { roomId: data.roomId, firstPlayerId: data.firstPlayerId, picks: data.picks });
 });
 
 socket.on('optionsForCard', (data: OptionsMessage) => {

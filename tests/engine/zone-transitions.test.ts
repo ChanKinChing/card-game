@@ -25,6 +25,23 @@ function spell(source: ReturnType<typeof instantiateCard>): SpellStackObject {
 }
 
 describe('central zone transitions', () => {
+  it('rejects host moves with an absent or stale destination before removing a card', () => {
+    const room = createTestRoom();
+    const card = room.players.player1.hand[0];
+    const host = instantiateCard('wind-spirit-chief-leon');
+    host.state = { ...host.state, zone: 'battlefield', zoneRevision: 2, ownerId: 'player1', controllerId: 'player1' };
+    room.battlefield = [host];
+    const move = { type: 'MOVE_CARD', cardUuid: card.uuid, playerId: 'player1', from: 'hand', to: 'hosted' } as const;
+    expect(gameReducer(room, move)).toBe(room);
+    expect(gameReducer(room, { ...move, toHost: { host: { cardUuid: host.uuid, zoneRevision: 1 }, visibility: 'public' } })).toBe(room);
+    expect(gameReducer(room, { ...move, toHost: { host: { cardUuid: host.uuid, zoneRevision: 2 },
+      visibility: 'owner', viewerId: 'departed' } })).toBe(room);
+    expect(gameReducer(room, { ...move, to: 'graveyard', handRecipientId: 'player2' })).toBe(room);
+    const stored = gameReducer(room, { ...move, toHost: { host: { cardUuid: host.uuid, zoneRevision: 2 }, visibility: 'public' } });
+    expect(stored.players.player1.hosted?.map(value => value.uuid)).toEqual([card.uuid]);
+    expect(stored.players.player1.hand).toEqual([]);
+  });
+
   it.each(['hand', 'graveyard', 'library'] as const)('resets active state when leaving for %s and preserves identity/information', to => {
     const { room, card } = fixture();
     const before = structuredClone(card.state);

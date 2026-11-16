@@ -7,10 +7,11 @@ import { validManaAmounts } from './mana-pool';
 import { MANA_COLORS, type ManaColor } from '../types/card.types';
 import type { DebugMode } from '../types/debug-mode.types';
 
-interface PlayerCommand {
+export interface PlayerCommand {
   status: GameRoom['status'];
   debug?: Exclude<DebugMode, 'off'>;
   validate: (data: ActionData) => string | undefined;
+  checkRoom?: (room: GameRoom, playerId: PlayerId, data: ActionData) => string | undefined;
   execute: (engine: GameEngine, playerId: PlayerId, data: ActionData) => ActionResult;
 }
 
@@ -72,6 +73,13 @@ export function validateActionData(data: unknown): string | undefined {
 }
 
 const noFields = () => undefined;
+const priorityError = (room: GameRoom, playerId: PlayerId) => room.priorityPlayerId === playerId ? undefined : 'Not your priority!';
+const debugEndTurnError = (room: GameRoom) => room.stack.length ? 'Cannot end turn while the stack is not empty!' : undefined;
+
+function enterBattleError(room: GameRoom, playerId: PlayerId, data: ActionData): string | undefined {
+  const result = enterBattleHandler.validate(room, playerId, data);
+  return result.success ? priorityError(room, playerId) : result.reason;
+}
 
 /** Propose the action, then hand priority to the active player. */
 function declareAndRespond(engine: GameEngine, playerId: PlayerId, actionId: string, data: ActionData): ActionResult {
@@ -86,13 +94,10 @@ export const playerCommands: Record<string, PlayerCommand> = {
   [ACTION_IDS.enterBattle]: {
     status: 'playing',
     validate: noFields,
+    checkRoom: enterBattleError,
     execute: (engine, playerId, data) => {
-      const result = enterBattleHandler.validate(engine.roomState, playerId, data);
-      if (!result.success) return result;
-
-      // Guard: only the player holding priority may enter battle.
-      if (engine.priorityPlayerId !== playerId) return reject('Not your priority!');
-
+      const error = enterBattleError(engine.roomState, playerId, data);
+      if (error) return reject(error);
       const passed = engine.passPriority(playerId);
 
       return passed.success ? { success: true, mutations: passed.mutations } : reject('Not your priority!');
@@ -119,6 +124,7 @@ export const playerCommands: Record<string, PlayerCommand> = {
   [ACTION_IDS.passPriority]: {
     status: 'playing',
     validate: noFields,
+    checkRoom: priorityError,
     execute: (engine, playerId) => {
       const result = engine.passPriority(playerId);
 
@@ -130,6 +136,7 @@ export const playerCommands: Record<string, PlayerCommand> = {
     status: 'playing',
     debug: 'stack',
     validate: noFields,
+    checkRoom: (room) => room.stack.length ? undefined : 'Stack is empty',
     execute: (engine) => engine.resolveTopOfStack(),
   },
 
@@ -137,18 +144,10 @@ export const playerCommands: Record<string, PlayerCommand> = {
     status: 'playing',
     debug: 'flow',
     validate: noFields,
-    execute: (engine) => engine.roomState.stack.length > 0
-      ? reject('Cannot end turn while the stack is not empty!')
-      : { success: true, mutations: engine.advancePhase('skipToEnd') },
-  },
-
-  [ACTION_IDS.rpsPlay]: {
-    status: 'RPS',
-    validate: noFields,
-    execute: (engine, playerId, data) => {
-      const result = engine.handleAction(playerId, ACTION_IDS.rpsPlay, data);
-
-      return result.success ? { ...result, mutations: engine.applyMutations(result.mutations ?? []) } : result;
+    checkRoom: debugEndTurnError,
+    execute: (engine) => {
+      const error = debugEndTurnError(engine.roomState);
+      return error ? reject(error) : { success: true, mutations: engine.advancePhase('skipToEnd') };
     },
   },
 };

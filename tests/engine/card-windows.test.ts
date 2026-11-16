@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { GameEngine } from '@engine/game-engine';
 import { gameReducer } from '@engine/game-reducer';
+import { publicObservedCard } from '@engine/captured-windows';
 import { parseInstructionDefinition } from '@library/card-parser';
 import { collectCardSource } from '@rules/card-collections';
 import { baseCardVisibility } from '@rules/card-visibility';
@@ -32,6 +33,23 @@ function results(engine: GameEngine) {
 }
 
 describe('captured card windows', () => {
+  it.each([
+    { label: 'private look', visibility: privateVisibility, event: 'none', onlyPublic: false },
+    { label: 'visible observation without a reveal event', visibility: publicVisibility, event: 'none', onlyPublic: false },
+    { label: 'actual public reveal', visibility: publicVisibility, event: 'revealed', onlyPublic: true },
+  ])('consumes a single named public reveal for later effects ($label)', ({ visibility, event, onlyPublic }) => {
+    const { engine } = start([capture({ amount: 1, visibility, event }), pause]);
+    expect(engine.resolveTopOfStack().success).toBe(true);
+    const continuation = engine.roomState.pendingChoice?.continuation;
+    if (continuation?.type !== 'resolution') throw new Error('Expected a retained capture');
+    const { stackObj } = continuation;
+    const source = { kind: 'result', name: 'window' } as const;
+    const observed = publicObservedCard(engine.roomState, stackObj, source);
+    expect(observed?.uuid).toBe(onlyPublic ? 'hidden-7' : undefined);
+    expect(publicObservedCard(engine.roomState, stackObj, { ...source, name: 'missing' })).toBeUndefined();
+    expect(publicObservedCard(engine.roomState, stackObj, { ...source, except: 'window' })).toBeUndefined();
+  });
+
   it('captures exactly six unmoved cards in source order, with ordinary hidden base visibility', () => {
     const { engine } = start();
     const before = JSON.stringify(engine.roomState.players.player1.deck);

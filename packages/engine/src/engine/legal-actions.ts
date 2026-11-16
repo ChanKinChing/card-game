@@ -39,8 +39,9 @@ function* selections(
   if (selected.length >= max) return;
   if (selected.length >= 32) { search.incomplete = 'search_limit'; return; }
   for (const id of ids) {
+    if (selected.includes(id)) continue;
     if (search.remaining <= 0) { search.incomplete = 'search_limit'; return; }
-    if (!selected.includes(id)) yield* selections(ids, min, max, search, [...selected, id]);
+    yield* selections(ids, min, max, search, [...selected, id]);
   }
 }
 
@@ -68,25 +69,26 @@ export function* allocations(
 function* answers(choice: PendingChoice, search: Search): Generator<ChoiceAnswer> {
   if (choice.kind === 'number') {
     // Open/large ranges are sampled, never treated as exhausted after a failed sample.
-    const end = Math.min(choice.range.max ?? Infinity, choice.range.min + 31);
-    if (choice.range.max === undefined || choice.range.max > end) search.incomplete = 'number_range_limit';
+    const maximum = choice.range.max ?? Number.MAX_SAFE_INTEGER;
+    const end = Math.min(maximum, choice.range.min + 31);
+    if (maximum > end) search.incomplete = 'number_range_limit';
     for (let number = choice.range.min; number <= end; number++) {
       if (!spend(search)) return;
       const answer = validateChoiceAnswer(choice, { number });
-      yield answer!;
+      if (answer) yield answer;
     }
     return;
   }
   if (choice.kind === 'distribution' || choice.kind === 'payment') {
     for (const allocation of allocations(choice, search)) {
       const answer = validateChoiceAnswer(choice, { allocations: allocation });
-      yield answer!;
+      if (answer) yield answer;
     }
     return;
   }
   for (const ids of selections(choice.options.map(option => option.id), choice.min, choice.max, search)) {
     const answer = validateChoiceAnswer(choice, { choices: ids });
-    yield answer!;
+    if (answer) yield answer;
   }
 }
 
@@ -102,10 +104,10 @@ function complete(
     return;
   }
   const continuation = preparation.choice.continuation as Extract<PendingChoice['continuation'], { type: 'action' }>;
+  // The answer generator distinguishes an exhausted choice from work left at the budget boundary.
   for (const answer of answers(preparation.choice, search)) {
     const witness = complete(room, playerId, candidate, search, applyActionChoice(continuation, answer), depth + 1);
     if (witness) return witness;
-    if (search.remaining <= 0) return;
   }
 }
 

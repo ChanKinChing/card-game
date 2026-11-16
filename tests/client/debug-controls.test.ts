@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import DebugControls from '@client/components/DebugControls';
+import OpeningRound from '@client/components/OpeningRound';
 import PhaseBar from '@client/components/PhaseBar';
 import { useGameStore } from '@client/store/gameStore';
 import { createTestRoom } from '../helpers/client-view-fixture';
@@ -48,16 +49,16 @@ describe('PhaseBar debug integration', () => {
     let html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('No attacks'); expect(html).not.toContain('disabled');
     expect(html).not.toContain('Pass Priority');
-    room.combatDeclarations = { attackers: true, blockers: false }; room.declarationPlayerId = null; room.priorityPlayerId = 'player1';
-    useGameStore.setState({ room: { ...room } });
+    useGameStore.setState({ room: createTestRoom({ phase: 'declareAttackersStep', priorityPlayerId: 'player1',
+      combatDeclarations: { attackers: true, blockers: false }, debugMode: 'off' }) });
     html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).not.toContain('No attacks'); expect(html).toContain('Continue');
   });
   it('offers blocker choices to the defender independently of priority', () => {
-    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null }), myPlayerId: 'player2' });
+    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null }, 'player2'), myPlayerId: 'player2' });
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('No blocks'); expect(html).not.toContain('Pass Priority');
-    useGameStore.setState({ myPlayerId: 'player1' });
+    useGameStore.setState({ room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null }), myPlayerId: 'player1' });
     expect(renderToStaticMarkup(createElement(PhaseBar))).not.toContain('No blocks');
   });
   it('labels postcombat main and offers no second combat shortcut', () => {
@@ -86,9 +87,9 @@ describe('PhaseBar debug integration', () => {
   });
 
   it('allows the player without priority to resolve an open stack', () => {
-    const room = createTestRoom({ debugMode: 'stack' });
-    // Rendering only consumes stack length, so no effect execution fixture is needed.
+    const room = createTestRoom({ debugMode: 'stack' }, 'player2');
     room.stack.length = 1;
+    room.legalActions = { actions: ['resolve_stack', 'concede'] };
     useGameStore.setState({ room, myPlayerId: 'player2' });
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('Resolve Stack');
@@ -101,7 +102,7 @@ describe('PhaseBar debug integration', () => {
     expect(renderToStaticMarkup(createElement(PhaseBar))).not.toContain('Debug actions');
   });
 
-  it.each(['RPS', 'gameOver'] as const)('hides debug controls in %s status', (status) => {
+  it.each(['waiting', 'gameOver'] as const)('hides debug controls in %s status', (status) => {
     useGameStore.setState({ lastSeq: 0, room: createTestRoom({ status }) });
     expect(renderToStaticMarkup(createElement(PhaseBar))).not.toContain('Debug actions');
   });
@@ -135,7 +136,7 @@ describe('PhaseBar debug integration', () => {
   });
 
   it('offers one no-block action for an empty draft and no phase action while targeting', () => {
-    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null, debugMode: 'off' }), myPlayerId: 'player2',
+    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null, debugMode: 'off' }, 'player2'), myPlayerId: 'player2',
       combatSelection: { attackers: [], blockerPairs: [], pendingBlocker: null } });
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('No blocks'); expect(html).not.toContain('Confirm Blockers (0)');
@@ -152,4 +153,20 @@ describe('PhaseBar debug integration', () => {
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('Choose below to continue'); expect(html).not.toContain('Updating the board'); expect(html).not.toContain('primary-action');
   });
+});
+
+it('sends an opening pick via the lobby socket and hides buttons after it is locked', () => {
+  const previous = useGameStore.getState();
+  const emit = vi.mocked(socket.emit); emit.mockClear();
+  try {
+    useGameStore.setState({ roomId: 'room', roomSync: 'live', lobbyRps: { myPick: null, opponentReady: true } });
+    expect(renderToStaticMarkup(createElement(OpeningRound))).toContain('Opponent is ready');
+    const view = OpeningRound() as ReactElement<{ children: [unknown, ReactElement<{ onClick: () => void }>[], unknown] }>;
+    view.props.children[1][1].props.onClick();
+    expect(emit).toHaveBeenCalledExactlyOnceWith('submitRps', { protocolVersion: 1, roomId: 'room', pick: 'paper' });
+    useGameStore.setState({ lobbyRps: { myPick: 'paper', opponentReady: true } });
+    const locked = renderToStaticMarkup(createElement(OpeningRound));
+    expect(locked).toContain('Locked in: paper');
+    expect(locked).not.toContain('<button');
+  } finally { useGameStore.setState(previous); }
 });

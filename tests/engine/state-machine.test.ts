@@ -28,7 +28,6 @@ function createTestRoom(): GameRoom {
     continuousEffectPool: [],
     stack: [],
     combat: [],
-    rpsState: { status: 'pending', playedCards: {} },
   };
 }
 

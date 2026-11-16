@@ -79,9 +79,5 @@ export interface GameRoom {
 	continuousEffectPool: ContinuousEffectEntry[];
 
 	// Mini-game state parameters
-	rpsState: {
-		status: string;
-		playedCards: Record<PlayerId, string>; // Maps player IDs to 'rock' | 'paper' | 'scissors'
-	};
 }
 

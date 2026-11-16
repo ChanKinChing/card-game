@@ -203,3 +203,23 @@ describe('small card mechanics', () => {
     engine.resolveTopOfStack(); expect(engine.roomState.players.player2.deck).toHaveLength(10);
   });
 });
+
+it.each([
+  ['empire-servant', 'player1'],
+  ['worlds-traveler', 'player2'],
+] as const)('諸界火術士 ignores %s attacking for %s', (id, playerId) => {
+  const { engine, source } = game('worlds-pyromancer');
+  cast(engine, source);
+  const attacker = card(id, 'battlefield', playerId);
+  const enemy = card('musketeer-infantry', 'battlefield', 'player2');
+  engine.roomState.battlefield.push(attacker, enemy);
+  engine.roomState.activeTurnPlayerId = playerId;
+  engine.roomState.phase = 'declareAttackersStep';
+  engine.roomState.priorityPlayerId = null;
+  expect(engine.executePlayerAction(playerId, 'declare_attackers', {
+    attackers: [{ cardUuid: attacker.uuid }],
+  }).success).toBe(true);
+  expect(engine.roomState.stack).toEqual([]);
+  expect(engine.roomState.pendingChoice).toBeFalsy();
+  expect(engine.roomState.players.player1.hand).toEqual([]);
+});

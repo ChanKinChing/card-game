@@ -115,6 +115,8 @@ describe('additional workbook cards using existing primitives', () => {
     }
     const host = card('winged-envoy'); engine.roomState.battlefield.push(host); attach(engine, source, host);
     expect(characteristics.resolvePower(engine.roomState, host)).toBe(3);
+    engine.applyMutations([{ type: 'MOVE_CARD', cardUuid: source.uuid, playerId: 'player1', from: 'battlefield', to: 'hand' }]);
+    expect(characteristics.resolvePower(engine.roomState, host)).toBe(1);
   });
 
   it.each([0, 2])('staff can replace an empty hand with %s cards from the opponent hand count', opponentCount => {

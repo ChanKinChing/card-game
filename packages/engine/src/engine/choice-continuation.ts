@@ -32,26 +32,68 @@ interface ChoiceHost {
   resumeActionChoice(playerId: PlayerId, continuation: ActionContinuation, answer: ChoiceAnswer): ActionResult;
 }
 
-/** Dispatch one already room-owned pending request. No general action routing. */
-export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: ActionData): ActionResult {
-  const choice = host.room.pendingChoice!;
-  const reject = (reason: string): ActionResult => ({ success: false, phase: 'validate', reason });
-
-  // Guard: the choice must belong to this player and still be current.
+/** Validate the offered input and plan the current choice stage without committing it. */
+export function preparePendingChoiceAnswer(room: GameRoom, playerId: PlayerId, data: ActionData) {
+  const choice = room.pendingChoice;
+  const reject = (reason: string) => ({ kind: 'reject' as const, reason });
+  if (!choice) return reject('No choice is pending');
   if (choice.playerId !== playerId) return reject('This choice belongs to another player');
   if (data.choiceId !== choice.id) return reject('Choice request is stale');
-  if (!capturedChoiceAllowed(host.room, choice)) return reject('Captured card access is no longer available');
+  if (!capturedChoiceAllowed(room, choice)) return reject('Captured card access is no longer available');
 
-  if (choice.continuation.type === 'resolution' && 'paymentStage' in choice.continuation) {
-    const answer = data.cancel === true ? undefined : validateChoiceAnswer(choice, data);
-    if (!answer && data.cancel !== true) return reject('Invalid payment choice');
-    const payment = answerResolutionPayment(
-      host.room,
-      choice.continuation as PaymentContinuation,
-      answer,
-      data.cancel === true,
-    );
-    if (!payment.success) return reject(payment.reason);
+  const continuation = choice.continuation;
+  const cancel = data.cancel === true;
+  const answer = validateChoiceAnswer(choice, data);
+  if (continuation.type === 'resolution' && 'paymentStage' in continuation) {
+    if (!answer && !cancel) return reject('Invalid payment choice');
+    const payment = answerResolutionPayment(room, continuation as PaymentContinuation, cancel ? undefined : answer, cancel);
+    return payment.success ? { kind: 'payment' as const, payment } : reject(payment.reason);
+  }
+
+  if (cancel && continuation.type === 'action') return { kind: 'cancel' as const };
+  if (!answer) return reject('Invalid choice answer');
+
+  if (continuation.type === 'state_based') {
+    try {
+      return { kind: 'state_based' as const, continuation, plan: answerStateBasedChoice(room, choice, answer) };
+    } catch (error) {
+      return reject(error instanceof Error ? error.message : 'Invalid state-based decision');
+    }
+  }
+
+  if (continuation.type === 'replacement') {
+    try {
+      return { kind: 'replacement' as const, continuation, plan: resumeProposedChoice(room, choice, answer) };
+    } catch (error) {
+      return reject(error instanceof Error ? error.message : 'Invalid replacement decision');
+    }
+  }
+
+  if (continuation.type === 'combat') {
+    const plan = answerCombatDamage(room, choice, answer);
+    return plan.kind === 'reject' ? reject(plan.error) : { kind: 'combat' as const, plan };
+  }
+
+  if (continuation.type === 'trigger') {
+    const queue = applyTriggerChoice(room, choice, answer);
+    return queue ? { kind: 'trigger' as const, queue } : reject('Select trigger modes with legal required targets');
+  }
+
+  if (continuation.type === 'resolution') {
+    const uses = planResolutionOptionUses(room, choice, answer);
+    return uses ? { kind: 'resolution' as const, choice, answer, uses } : reject('A selected option is no longer available');
+  }
+
+  return { kind: 'action' as const, continuation, answer };
+}
+
+/** Dispatch one already room-owned pending request. No general action routing. */
+export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: ActionData): ActionResult {
+  const prepared = preparePendingChoiceAnswer(host.room, playerId, data);
+  if (prepared.kind === 'reject') return { success: false, phase: 'validate', reason: prepared.reason };
+
+  if (prepared.kind === 'payment') {
+    const { payment } = prepared;
     if ('pendingChoice' in payment) {
       return host.commitResolution({ success: true, mutations: [], pendingChoice: payment.pendingChoice });
     }
@@ -61,7 +103,7 @@ export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: 
   }
 
   // Cancelling an action choice clears the pending state without resolving.
-  if (data.cancel === true && choice.continuation.type === 'action') {
+  if (prepared.kind === 'cancel') {
     return {
       success: true,
       mutations: host.applyMutations([
@@ -71,17 +113,8 @@ export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: 
     };
   }
 
-  const answer = validateChoiceAnswer(choice, data);
-  if (!answer) return reject('Invalid choice answer');
-
-  if (choice.continuation.type === 'state_based') {
-    let plan: ReturnType<typeof answerStateBasedChoice>;
-
-    try {
-      plan = answerStateBasedChoice(host.room, choice, answer);
-    } catch (error) {
-      return reject(error instanceof Error ? error.message : 'Invalid state-based decision');
-    }
+  if (prepared.kind === 'state_based') {
+    const { continuation, plan } = prepared;
 
     // Another decision is needed before the batch can commit.
     if (plan.pendingChoice) {
@@ -107,24 +140,16 @@ export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: 
     );
 
     // Hand priority back once the rules work has settled.
-    if (!host.isGameOver && !host.hasPendingRulesWork && choice.continuation.batch.resumePriority) {
-      mutations.push(...host.givePriorityTo(choice.continuation.batch.resumePriority));
+    if (!host.isGameOver && !host.hasPendingRulesWork && continuation.batch.resumePriority) {
+      mutations.push(...host.givePriorityTo(continuation.batch.resumePriority));
     }
 
     return { success: true, mutations };
   }
 
-  if (choice.continuation.type === 'replacement') {
-    const saved = choice.continuation;
+  if (prepared.kind === 'replacement') {
+    const { continuation: saved, plan } = prepared;
     const transaction = saved.parents?.slice(-1)[0] ?? saved.transaction;
-
-    let plan: ReturnType<typeof resumeProposedChoice>;
-
-    try {
-      plan = resumeProposedChoice(host.room, choice, answer);
-    } catch (error) {
-      return reject(error instanceof Error ? error.message : 'Invalid replacement decision');
-    }
 
     if (plan.pendingChoice) {
       return {
@@ -177,11 +202,8 @@ export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: 
     return { success: true, mutations };
   }
 
-  if (choice.continuation.type === 'combat') {
-    const plan = answerCombatDamage(host.room, choice, answer);
-    if (plan.kind === 'reject') return reject(plan.error);
-
-    const mutations = host.applyMutations(host.combatPlanMutations(plan));
+  if (prepared.kind === 'combat') {
+    const mutations = host.applyMutations(host.combatPlanMutations(prepared.plan));
 
     if (!host.isGameOver && !host.hasPendingRulesWork) {
       mutations.push(...host.givePriorityTo(host.room.activeTurnPlayerId));
@@ -190,10 +212,8 @@ export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: 
     return { success: true, mutations };
   }
 
-  if (choice.continuation.type === 'trigger') {
-    const queue = applyTriggerChoice(host.room, choice, answer);
-    if (!queue) return reject('Select trigger modes with legal required targets');
-
+  if (prepared.kind === 'trigger') {
+    const { queue } = prepared;
     return {
       success: true,
       mutations: host.applyMutations([
@@ -204,14 +224,13 @@ export function answerPendingChoice(host: ChoiceHost, playerId: PlayerId, data: 
     };
   }
 
-  if (choice.continuation.type === 'resolution') {
-    const uses = planResolutionOptionUses(host.room, choice, answer);
-    if (!uses) return reject('A selected option is no longer available');
+  if (prepared.kind === 'resolution') {
+    const { uses, choice, answer } = prepared;
     const room = uses.reduce(gameReducer, host.room);
     const continuation = applyResolutionChoice(room, choice, answer);
     const next = planStackResolution(room, continuation.stackObj, continuation, host.effectContext);
     return host.commitResolution({ success: true, ...next, mutations: [...uses, ...next.mutations] });
   }
 
-  return host.resumeActionChoice(playerId, choice.continuation, answer);
+  return host.resumeActionChoice(playerId, prepared.continuation, prepared.answer);
 }

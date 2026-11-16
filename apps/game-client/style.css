@@ -1149,10 +1149,6 @@ html[data-route='play'] .workspace-header {
   color: var(--parchment-dim);
 }
 
-.rps-waiting {
-  font-size: 0.72rem;
-  color: var(--info);
-}
 
 .phase-actions {
   display: flex;

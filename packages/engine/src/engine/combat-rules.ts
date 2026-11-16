@@ -104,6 +104,11 @@ export class CombatRuleRegistry {
     }
   }
 
+  /** A declaration-sensitive grant can only be decided on the complete submission. */
+  static mayOverrideSummoningSickness(card: CardInstance): boolean {
+    return !card.state.summoningSickness || [...this.rules].some(rule => rule.canAttackWhileSummoningSick !== undefined);
+  }
+
   /** Any rule may grant the ability to attack despite summoning sickness. */
   static canAttackWhileSummoningSick(context: AttackerContext, attacker: CardInstance): boolean {
     return [...this.rules].reduce((allowed, rule) => rule.canAttackWhileSummoningSick?.(context, attacker) ?? allowed, false);

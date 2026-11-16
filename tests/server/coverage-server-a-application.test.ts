@@ -187,7 +187,7 @@ describe('server application socket guard rails', { timeout: 20_000 }, () => {
 
     const second = await client(url, await guest(url));
     second.socket.emit('joinRoom', { protocolVersion: PROTOCOL_VERSION, roomId });
-    await vi.waitFor(() => expect(host.room?.status).toBe('RPS'), { timeout: 4000 });
+    await vi.waitFor(() => expect(host.room?.player2Id).toBeTruthy(), { timeout: 4000 });
     const third = await client(url, await guest(url));
     const full = once<{ protocolVersion: number }>(third.socket, 'roomFull');
     third.socket.emit('joinRoom', { protocolVersion: PROTOCOL_VERSION, roomId });
@@ -236,13 +236,16 @@ describe('server application rejoin and account room ownership', { timeout: 20_0
     expect(app.store.getRoom(roomId)).toBeDefined();
   });
 
-  it('falls back to the ordinary join path when a reclaimed seat no longer matches the departed player', async () => {
+  it('falls back to the ordinary join path when a reclaimed seat belongs to a departed player', async () => {
     const { app, url } = await start();
     const account = await register(url, 'departed-owner');
     const owner = await client(url, account), roomId = await createRoom(owner);
     const opponent = await client(url, await guest(url));
     opponent.socket.emit('joinRoom', { protocolVersion: PROTOCOL_VERSION, roomId });
-    await vi.waitFor(() => expect(opponent.room?.status).toBe('RPS'), { timeout: 4000 });
+    await vi.waitFor(() => expect(opponent.room?.player2Id).toBeTruthy(), { timeout: 4000 });
+    owner.socket.emit('submitRps', { protocolVersion: PROTOCOL_VERSION, roomId, pick: 'rock' });
+    opponent.socket.emit('submitRps', { protocolVersion: PROTOCOL_VERSION, roomId, pick: 'rock' });
+    await vi.waitFor(() => expect(opponent.room?.status).toBe('playing'), { timeout: 4000 });
     const left = once<{ roomId: string }>(owner.socket, 'roomLeft');
     owner.socket.emit('leaveRoom', { protocolVersion: PROTOCOL_VERSION, roomId });
     expect((await left).roomId).toBe(roomId);

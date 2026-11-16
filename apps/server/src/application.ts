@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import helmet from 'helmet';
 import { Server as SocketIOServer, type Socket } from 'socket.io';
-import { PROTOCOL_VERSION, AutoPassRequestSchema, PlatformResponseSchema, isProtocolMessage, RoomSetupRequestSchema, JoinRoomRequestSchema, RoomSnapshotRequestSchema, type OptionsMessage, type SnapshotMessage } from '@card-game/protocol';
+import { PROTOCOL_VERSION, AutoPassRequestSchema, PlatformResponseSchema, isProtocolMessage, RoomSetupRequestSchema, JoinRoomRequestSchema, SubmitRpsSchema, RoomSnapshotRequestSchema, type ActionInspectionMessage, type OptionsMessage, type SnapshotMessage } from '@card-game/protocol';
 import { createBrowserRouter } from './auth/browser-routes';
 import { createPasswordLimiter } from './auth/password-rate-limit';
 import { gameConfig, getRuleDefaults, getSetupPreset, snapshotSetupConfig } from '@card-game/engine/config';
@@ -26,12 +26,12 @@ import { AuditService } from './admin/audit';
 import { DiagnosticLogReader } from './admin/log-reader';
 import { originAllowed, originPolicy } from './http/origin-policy';
 import { authenticateHandshake, type SocketIdentity } from './realtime/handshake';
-import { parseActionPacket } from './rooms/action-packet';
+import { parseActionPacket, type ActionPacket } from './rooms/action-packet';
 import { RoomRuntime } from './rooms/room-runtime';
 import { SyncService } from './rooms/sync-service';
 import { InMemoryStore, type ServerStateStore } from './rooms/state-store';
 import { buildPlayerView } from './projection/view-builder';
-import { decodeChoiceAnswer } from './projection/choice-view';
+import { decodeChoiceAnswer, projectActionInspection } from './projection/choice-view';
 import { createDebugRouter } from './projection/debug-channel';
 import { projectActionOptions } from './projection/action-options';
 import { decodeAbilityId } from './projection/wire-identifiers';
@@ -81,15 +81,26 @@ export function createGameApplication(options: ApplicationOptions = {}) {
   const sync = new SyncService(io, deltaPath), logs = new DiagnosticLogReader(deltaPath, config.logging);
   const runtime = new RoomRuntime(store, {
     publishDelta: request => {
-      const delta = sync.buildDelta(request.oldState, request.mutations, { action: request.action, playerId: request.playerId, batches: request.batches });
-      sync.broadcast(delta, request.room, playerId => request.recipients.get(playerId)!);
+      const { room, viewSeq } = request;
+      if (viewSeq !== undefined) sync.restoreSeq(room.roomId, viewSeq);
+      try {
+        const delta = sync.buildDelta(request.oldState, request.mutations, {
+          action: request.action, playerId: request.playerId, batches: request.batches, viewSeq,
+        });
+        sync.broadcast(delta, room, playerId => request.recipients.get(playerId)!);
+      } catch (error) {
+        serverLogger.error('delta:publish-failed', 'Could not publish committed match update', {
+          roomId: room.roomId, seq: sync.currentSeq(room.roomId), reason: error instanceof Error ? error.message : 'Unknown publish failure',
+        });
+      }
     },
     autoPassChanged: (socketId, status) => { io.to(socketId).emit('autoPassStatus', status); },
     roomDestroyed: ({ roomId, socketIds }) => {
       store.auth.deleteRoomSeats(roomId);
       for (const socketId of socketIds) io.to(socketId).emit('roomDestroyed', { protocolVersion: PROTOCOL_VERSION, roomId });
     },
-  }, config.rooms.reconnectGraceMs, {}, roomSettings, config.rooms.autoPassDelayMs);
+  }, config.rooms.reconnectGraceMs, {}, roomSettings, config.rooms.autoPassDelayMs, persistent);
+  runtime.restoreMatches((roomId, seq) => sync.restoreSeq(roomId, seq));
   const scenarios = new ScenarioService(persistent ?? new MemoryScenarioRepository(), runtime, auth, config, now);
   app.disable('x-powered-by');
   app.set('trust proxy', config.http.trustProxy);
@@ -143,6 +154,7 @@ export function createGameApplication(options: ApplicationOptions = {}) {
       protocolVersion: PROTOCOL_VERSION,
       seq: sync.currentSeq(room.roomId),
       room: buildPlayerView(room, playerId),
+      lobbyRps: runtime.lobbyView(room.roomId, playerId),
       ...(run ? { testContext: { scenarioId: run.scenarioId, revision: run.revision, name: run.snapshot.name } } : {}),
     };
   };
@@ -285,21 +297,48 @@ export function createGameApplication(options: ApplicationOptions = {}) {
       socket.emit('sessionReady', { ...auth.info(identity.session, joined.roomId), playerId: joined.playerId });
       socket.join(joined.roomId); socket.emit('roomJoined', { protocolVersion: PROTOCOL_VERSION, roomId: joined.roomId });
       io.to(joined.roomId).emit('playerJoined', { protocolVersion: PROTOCOL_VERSION, playerId: joined.playerId });
-      io.to(joined.roomId).emit('startGame', { protocolVersion: PROTOCOL_VERSION, roomId: joined.roomId });
-      io.to(joined.roomId).emit('rpsPhase', { protocolVersion: PROTOCOL_VERSION, message: 'Choose Rock, Paper, or Scissors!' });
       publishSnapshot(joined.room);
+    });
+    socket.on('submitRps', (input: unknown) => {
+      const parsed = SubmitRpsSchema.safeParse(input);
+      if (!parsed.success) { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: 'Invalid opening pick' }); return; }
+      const { roomId, pick } = parsed.data;
+      const result = runtime.submitRps(socket.id, roomId, pick);
+      if (result.kind === 'error') { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: result.message }); return; }
+      publishSnapshot(result.room);
+      if (result.kind === 'started') for (const socketId of runtime.recipientsFor(result.room).values()) {
+        io.to(socketId).emit('startGame', { protocolVersion: PROTOCOL_VERSION, roomId, firstPlayerId: result.firstPlayerId, picks: result.picks });
+      }
+    });
+    const decodeActionOptions = (packet: ActionPacket, room: GameRoom, actor: string): void => {
+      if (packet.actionId === 'activate_ability' || packet.actionId === 'tapForMana')
+        packet.data = decodeAbilityId(room, actor, packet.data);
+      if (packet.actionId === 'choose') packet.data = decodeChoiceAnswer(room, actor, packet.data);
+    };
+    socket.on('inspectPlayerAction', (input: unknown, acknowledge: unknown) => {
+      if (typeof acknowledge !== 'function') return;
+      const reply = (result: ActionInspectionMessage) => acknowledge(result);
+      const reject = (reason: string) => reply({ protocolVersion: PROTOCOL_VERSION, kind: 'unavailable', reason });
+      const packet = parseActionPacket(input);
+      if (!packet) return reject('Invalid player action packet');
+      const room = store.getRoom(packet.roomId);
+      if (!room || runtime.currentRoom(socket.id) !== packet.roomId)
+        return reject('This socket is not seated in that room');
+      const actor = auth.playerId(identity.session, packet.roomId);
+      try { decodeActionOptions(packet, room, actor); }
+      catch { return reject('Invalid action option'); }
+      reply(projectActionInspection(room, actor, runtime.inspectPlayerAction(socket.id, packet)));
     });
     socket.on('playerAction', (input: unknown) => {
       const packet = parseActionPacket(input);
       if (!packet) { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: 'Invalid player action packet' }); return; }
-      const room = store.getRoom(packet.roomId), actor = auth.playerId(identity.session, packet.roomId);
-      try {
-        if (room && (packet.actionId === 'activate_ability' || packet.actionId === 'tapForMana')) packet.data = decodeAbilityId(room, actor, packet.data);
-        if (room && packet.actionId === 'choose') packet.data = decodeChoiceAnswer(room, actor, packet.data);
-      } catch { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: 'Invalid action option', commandId: packet.commandId, action: packet.actionId }); return; }
-      const result = runtime.executePlayerAction(socket.id, packet);
+      const result = runtime.executePlayerAction(socket.id, packet, (room, actor) => {
+        decodeActionOptions(packet, room, actor);
+        return packet.data;
+      });
       if (result.kind === 'error') { socket.emit('error', { protocolVersion: PROTOCOL_VERSION, message: result.message, commandId: result.commandId, action: result.action }); return; }
-      if (result.snapshot) publishSnapshot(result.snapshot);
+      const room = result.duplicate ? store.getRoom(packet.roomId) : undefined;
+      if (room) socket.emit('roomSnapshot', snapshot(room, auth.playerId(identity.session, packet.roomId)));
     });
     socket.on('getOptions', (input: unknown, acknowledge?: unknown) => {
       const data = typeof input === 'object' && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : {};

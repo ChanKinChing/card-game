@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { GameEngine } from '@engine/game-engine';
+import { hasLegalNonPassAction } from '@engine/legal-actions';
 import { instantiateCard } from '@library/card-factory';
 import type { CardInstance, CardZone } from '@shared/card.types';
 import { createTestRoom, fillTestLibraries } from '../helpers/test-room-factory';
@@ -117,7 +118,10 @@ describe('workbook rituals', () => {
     expect(ritual(engine, source, [reference(first), reference(second)]).success).toBe(true);
     const choice = engine.roomState.pendingChoice;
     if (!choice || choice.kind === 'number') throw new Error('Expected replacement choice');
-    expect(answer(engine, [choice.options.find(option => option.value === 'skip:save')!.id]).success).toBe(true);
+    const skip = [choice.options.find(option => option.value === 'skip:save')!.id];
+    expect(engine.inspectPlayerAction('player1', 'choose', { choiceId: choice.id, choices: skip })).toEqual({ kind: 'ready' });
+    expect(engine.roomState.pendingChoice).toBe(choice);
+    expect(answer(engine, skip).success).toBe(true);
     expect(ids(engine.roomState.players.player1.graveyard)).toEqual(ids([first, second]));
     resolve(engine);
     expect(engine.roomState.battlefield.find(value => value.uuid === source.uuid)?.state.summonKind).toBe('effect');
@@ -132,7 +136,11 @@ describe('workbook rituals', () => {
       match: { kinds: ['destroy'], card: reference(second) }, operation: { type: 'cancel_event' },
     }];
 
-    expect(ritual(engine, source, [reference(first), reference(second)]).success).toBe(optional);
+    engine.roomState.players.player1.mana.blue = 0;
+    const action = { cardUuid: source.uuid, abilityId: 'ritual', materialPayments: [reference(first), reference(second)] };
+    expect(engine.inspectPlayerAction('player1', 'activate_ability', action).kind).toBe(optional ? 'ready' : 'unavailable');
+    expect(hasLegalNonPassAction(engine.roomState, 'player1').kind).toBe(optional ? 'available' : 'none');
+    expect(ritual(engine, source, action.materialPayments).success).toBe(optional);
     if (optional) {
       const choice = engine.roomState.pendingChoice;
       if (!choice || choice.kind === 'number') throw new Error('Expected replacement choice');
@@ -146,4 +154,20 @@ describe('workbook rituals', () => {
     expect(engine.roomState.stack).toHaveLength(0);
     expect(engine.roomState.replacementEffects?.[0].uses).toBe(1);
   });
+});
+
+it('auto-pass cannot claim no action while a payable combination of ritual materials remains unsearched', () => {
+  const patrol = card('sea-patrol', 'battlefield');
+  const haya = card('sea-god-caller-haya', 'battlefield');
+  const { engine, source } = game('blue-sea-prince', patrol, haya);
+  engine.roomState.players.player1.mana.blue = 0;
+  expect(hasLegalNonPassAction(engine.roomState, 'player1', { maxNodes: 5 }))
+    .toEqual({ kind: 'unknown', reason: 'search_limit' });
+  const witness = hasLegalNonPassAction(engine.roomState, 'player1');
+  if (witness.kind !== 'available') throw new Error('Expected a legal ritual witness');
+  expect(witness.action.actionId).toBe('activate_ability');
+  expect(witness.action.data.cardUuid).toBe(source.uuid);
+  expect(engine.executePlayerAction('player1', witness.action.actionId, witness.action.data).success).toBe(true);
+  resolve(engine);
+  expect(engine.roomState.battlefield.find(card => card.uuid === source.uuid)?.state.summonKind).toBe('effect');
 });

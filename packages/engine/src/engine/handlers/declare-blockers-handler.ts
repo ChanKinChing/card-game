@@ -6,6 +6,7 @@ import type { GameRoom, PlayerId } from '../../types/game.room.types';
 import type { CardInstance } from '../../types/card.types';
 import { CombatRuleRegistry, type BlockerContext } from '../combat-rules';
 import { liveCombatCard } from '../combat-state';
+import { actionPermission } from '../../shared/action-permissions';
 
 /** Build the combat-rule view of the submitted blocker assignments. */
 function context(room: GameRoom, playerId: PlayerId, assignments: { attackerUuid: string; blockerUuids: string[] }[] = []): BlockerContext {
@@ -21,6 +22,23 @@ function context(room: GameRoom, playerId: PlayerId, assignments: { attackerUuid
 
 function findCardOnBattlefield(room: GameRoom, cardUuid: string): CardInstance | undefined {
   return room.battlefield.find((c) => c.uuid === cardUuid);
+}
+
+function blockerSourceError(room: GameRoom, playerId: PlayerId, blocker: CardInstance): string | undefined {
+  if (CardCharacteristicService.resolveController(room, blocker) !== playerId) return `Blocker ${blocker.uuid} is not on your battlefield`;
+  if (!CardCharacteristicService.resolveTypes(room, blocker).includes('Creature')) return `Card ${blocker.uuid} is not a creature`;
+  if (blocker.state.isTapped) return `Blocker ${blocker.uuid} is tapped`;
+}
+
+/** Return creatures that may participate in the current blocker draft. */
+export function combatBlockerCandidates(room: GameRoom, playerId: PlayerId): string[] {
+  return room.battlefield.filter(card =>
+    !blockerSourceError(room, playerId, card) && actionPermission(room, playerId, card, 'block').allowed).map(card => card.uuid);
+}
+
+/** Return declarations whose attacker is still in combat. */
+export function combatBlockableAttackers(room: GameRoom): string[] {
+  return room.combat.filter(declaration => liveCombatCard(room, declaration.attacker)).map(declaration => declaration.uuid);
 }
 
 export const declareBlockersHandler: ActionHandler = {
@@ -76,20 +94,8 @@ export const declareBlockersHandler: ActionHandler = {
           return { success: false, phase: 'validate', reason: `Blocker ${blockerUuid} not found on battlefield` };
         }
 
-        // Blocker must be controlled by the defending player
-        if (CardCharacteristicService.resolveController(room, blocker) !== playerId) {
-          return { success: false, phase: 'validate', reason: `Blocker ${blockerUuid} is not on your battlefield` };
-        }
-
-        // Must be a creature
-        if (!CardCharacteristicService.resolveTypes(room, blocker).includes('Creature')) {
-          return { success: false, phase: 'validate', reason: `Card ${blockerUuid} is not a creature` };
-        }
-
-        // Must be untapped (MTG CR 509.1a — only untapped creatures can block)
-        if (blocker.state.isTapped) {
-          return { success: false, phase: 'validate', reason: `${CardCharacteristicService.resolve(room, blocker).name} is tapped` };
-        }
+        const reason = blockerSourceError(room, playerId, blocker);
+        if (reason) return { success: false, phase: 'validate', reason };
 
         assignedBlockers.add(blockerUuid);
       }

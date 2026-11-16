@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createRoom, joinRoom, setupRPS, buildTestDeck, dealStartingHands } from '@engine/room-factory';
+import { createRoom, joinRoom, buildTestDeck, dealStartingHands } from '@engine/room-factory';
 import { instantiateCard } from '@library/card-factory';
 import { gameConfig } from '@config';
 
@@ -83,59 +83,13 @@ describe('dealStartingHands', () => {
     joinRoom(room, 'p2');
     room.players['p1'].deck = buildTestDeck('p1');
     room.players['p2'].deck = buildTestDeck('p2');
-    // Simulate leftover RPS cards in hand.
-    room.players['p1'].hand = [instantiateCard('rock')];
-    room.players['p2'].hand = [instantiateCard('paper')];
+    // Simulate pre-existing cards in hand.
+    room.players['p1'].hand = [instantiateCard('empire-servant')];
+    room.players['p2'].hand = [instantiateCard('empire-servant')];
 
     dealStartingHands(room);
 
     expect(room.players['p1'].hand.length).toBe(5);
     expect(room.players['p2'].hand.length).toBe(5);
-  });
-});
-
-describe('setupRPS', () => {
-  it('uses injected UUIDs for all six RPS cards', () => {
-    const room = createRoom('room-1', 'p1');
-    joinRoom(room, 'p2');
-    let nextId = 0;
-
-    setupRPS(room, { uuid: () => `rps-${++nextId}` });
-
-    expect([...room.players.p1.hand, ...room.players.p2.hand].map(card => card.uuid)).toEqual([
-      'rps-1', 'rps-3', 'rps-5', 'rps-2', 'rps-4', 'rps-6',
-    ]);
-  });
-
-  it('deals RPS cards into both hands with zone=hand and correct ownership', () => {
-    const room = createRoom('room-1', 'p1');
-    joinRoom(room, 'p2');
-    setupRPS(room);
-
-    expect(room.status).toBe('RPS');
-
-    const p1 = room.players['p1'];
-    const p2 = room.players['p2'];
-
-    expect(p1.hand.length).toBe(3);
-    expect(p2.hand.length).toBe(3);
-
-    for (const card of p1.hand) {
-      expect(card.state.zone).toBe('hand');
-      expect(card.state.visibility).toBe('owner');
-      expect(card.state.visibilityZone).toBe('hand');
-      expect(card.state.ownerId).toBe('p1');
-      expect(card.state.controllerId).toBe('p1');
-      expect(['rock', 'paper', 'scissors']).toContain(card.blueprint.id);
-    }
-
-    for (const card of p2.hand) {
-      expect(card.state.zone).toBe('hand');
-      expect(card.state.visibility).toBe('owner');
-      expect(card.state.visibilityZone).toBe('hand');
-      expect(card.state.ownerId).toBe('p2');
-      expect(card.state.controllerId).toBe('p2');
-      expect(['rock', 'paper', 'scissors']).toContain(card.blueprint.id);
-    }
   });
 });

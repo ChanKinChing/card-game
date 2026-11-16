@@ -3,11 +3,12 @@ import type { StackObject } from '@card-game/engine/types/effect.types';
 import { MANA_COLORS } from '@card-game/engine/types/card.types';
 import { collectCards } from '@card-game/engine/shared/card-query';
 import { baseCardVisibleTo } from '@card-game/engine/shared/card-visibility';
+import { discoverPlayerControls } from '@card-game/engine/engine/player-action-query';
 import { declarationPlayer } from '@card-game/engine/shared/turn-utils';
 import { describeStackObject } from '@card-game/engine/shared/action-description';
 import { gameConfig, landPlayLimit } from '@card-game/engine/config';
 import { PROTOCOL_VERSION, type PlayerView, type StackView } from '@card-game/protocol';
-import { assertViewer, canSeeStackSource, canSeeHand, canSeeRpsPlay } from './reveal-policy';
+import { assertViewer, canSeeStackSource, canSeeHand } from './reveal-policy';
 import { buildCardView } from './card-view';
 import { buildObservationViews } from './observation-view';
 import { buildChoiceView } from './choice-view';
@@ -74,6 +75,7 @@ function projectPlayerView(room: GameRoom, viewerId: string, effectsFor: ReturnT
     ...(room.outcome ? { outcome: { type: room.outcome.type, ...(room.outcome.type === 'win' ? { winnerId: room.outcome.winnerId } : {}),
       losses: room.outcome.losses.map(loss => ({ playerId: loss.playerId, reason: loss.reason })) } as PlayerView['outcome'] } : {}),
     activeTurnPlayerId: room.activeTurnPlayerId, priorityPlayerId: room.priorityPlayerId, lastPassedPlayerId: room.lastPassedPlayerId,
+    legalActions: discoverPlayerControls(room, viewerId),
     declarationPlayerId: declarationPlayer(room), landPlayLimit: landPlayLimit(room.setup),
     turnHistory: { landPlays: Object.fromEntries(Object.keys(room.players).map(id => [id, room.turnHistory?.landPlays?.[id] ?? 0])) },
     stack: room.stack.map(object => buildStackView(room, viewerId, object)),
@@ -92,6 +94,5 @@ function projectPlayerView(room: GameRoom, viewerId: string, effectsFor: ReturnT
     ...(locks.length ? { publicNameLocks: locks } : {}),
     ...(hostedCards.length ? { hostedCards } : {}),
     pendingChoice: buildChoiceView(room, viewerId),
-    rpsState: { status: room.rpsState.status, playedCards: Object.fromEntries(Object.entries(room.rpsState.playedCards).filter(([id, value]) => canSeeRpsPlay(room, viewerId, id) && ['rock', 'paper', 'scissors'].includes(value))) },
   };
 }

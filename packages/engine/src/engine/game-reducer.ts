@@ -705,24 +705,6 @@ function reduceMutation(state: GameRoom, mutation: GameMutation): GameRoom | Ope
     case 'SET_LAST_PASSED':
       return { ...state, lastPassedPlayerId: mutation.playerId };
 
-    // -- RPS mutations --
-    case 'SET_RPS_STATUS':
-      return {
-        ...state,
-        rpsState: { ...state.rpsState, status: mutation.status },
-      };
-
-    case 'SET_RPS_PLAYED_CARD':
-      return {
-        ...state,
-        rpsState: {
-          ...state.rpsState,
-          playedCards: {
-            ...state.rpsState.playedCards,
-            [mutation.playerId]: mutation.card,
-          },
-        },
-      };
 
     default:
       return state;

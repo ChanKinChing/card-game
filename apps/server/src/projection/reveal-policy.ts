@@ -9,7 +9,6 @@ export function assertViewer(room: GameRoom, viewerId: string): void {
 }
 export const canSeeHand = (viewerId: string, ownerId: string): boolean => viewerId === ownerId;
 export const canSeeChoice = (room: GameRoom, viewerId: string): boolean => room.pendingChoice?.playerId === viewerId;
-export const canSeeRpsPlay = (room: GameRoom, viewerId: string, ownerId: string): boolean => room.rpsState.status === 'resolved' || viewerId === ownerId;
 export const isPublicPermanent = (room: GameRoom, uuid: string): boolean => room.battlefield.some(card => card.uuid === uuid);
 export const canSeeRetainedSource = (room: GameRoom, viewerId: string, card: CardInstance): boolean => card.state.zone === 'battlefield' || canSeeCard(room, viewerId, card);
 /** A choice can name the viewer's searched library cards; opaque handles carry their identity. */

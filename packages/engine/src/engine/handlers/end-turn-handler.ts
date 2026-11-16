@@ -15,13 +15,12 @@ import type { StackObject } from '../../types/effect.types';
  *   no priority windows) and completes the turn: endCombatStep → endPhase →
  *   cleanupStep → turnStart, then switches the active turn player.
  *
- * Validation only blocks RPS, a non-empty stack, and non-turn players.
+ * Validation only blocks non-playing rooms, a non-empty stack, and non-turn players.
  */
 export const endTurnHandler: ActionHandler = {
   validate(room: GameRoom, playerId: PlayerId, _action: ActionData): ActionResult {
-    // Guard: the game must be past the opening RPS phase.
-    if (room.status === 'RPS') {
-      return { success: false, phase: 'validate', reason: 'Cannot end turn during Rock Paper Scissors phase!' };
+    if (room.status !== 'playing') {
+      return { success: false, phase: 'validate', reason: 'Match has not started or is already over' };
     }
 
     // The stack is a zone, not a phase (MTG 116). Ending the turn while the

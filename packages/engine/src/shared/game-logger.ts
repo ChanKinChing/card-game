@@ -19,7 +19,7 @@ export interface LogEntry {
   level: LogLevel;
   /** Which subsystem emitted the log: 'server', 'client', 'engine', etc. */
   source: string;
-  /** Kebab-case domain event, e.g. 'room:created', 'rps:resolved'. */
+  /** Kebab-case domain event, e.g. 'room:created', 'match:started'. */
   event: string;
   /** Optional human-readable summary. */
   message?: string;

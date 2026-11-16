@@ -26,32 +26,17 @@ export function reconcileCombatSelection(
   selection: CombatSelection,
   room: PlayerView,
 ): { selection: CombatSelection; changed: boolean } {
-  // Gather eligible attacker uuids (untapped, non-sick creatures on the active player's battlefield)
-  const activePlayerId = room.activeTurnPlayerId;
-  const eligibleAttackers = new Set(
-    room.battlefield
-      .filter(c =>
-        c.state.controllerId === activePlayerId &&
-        c.canAttack,
-      )
-      .map(c => c.uuid),
-  );
-
-  // Gather combat attacker uuids (still in room.combat)
-  const combatAttackerUuids = new Set(room.combat.map(d => d.uuid));
-
-  // Gather eligible blocker uuids (untapped creatures on the defending player's battlefield)
-  const defendingPlayerId = room.activeTurnPlayerId === room.player1Id
-    ? room.player2Id! : room.player1Id;
-  const eligibleBlockers = new Set(
-    room.battlefield
-      .filter(c =>
-        c.state.controllerId === defendingPlayerId &&
-        c.canBlock,
-      )
-      .map(c => c.uuid),
-  );
-
+  const declaration = room.legalActions?.combat;
+  const defendingPlayerId = room.activeTurnPlayerId === room.player1Id ? room.player2Id : room.player1Id;
+  const eligibleAttackers = new Set(room.legalActions
+    ? declaration?.actionId === 'declare_attackers' ? declaration.attackerUuids : []
+    : room.battlefield.filter(card => card.state.controllerId === room.activeTurnPlayerId && card.canAttack).map(card => card.uuid));
+  const eligibleBlockers = new Set(room.legalActions
+    ? declaration?.actionId === 'declare_blockers' ? declaration.blockerUuids : []
+    : room.battlefield.filter(card => card.state.controllerId === defendingPlayerId && card.canBlock).map(card => card.uuid));
+  const combatAttackerUuids = new Set(room.legalActions
+    ? declaration?.actionId === 'declare_blockers' ? declaration.attackerUuids : []
+    : room.combat.map(group => group.uuid));
   const attackersOpen = room.status === 'playing' && room.phase === 'declareAttackersStep' && !room.combatDeclarations?.attackers;
   const blockersOpen = room.status === 'playing' && room.phase === 'declareBlockersStep' && !room.combatDeclarations?.blockers;
   const reconciledAttackers = attackersOpen ? selection.attackers.filter(uuid => eligibleAttackers.has(uuid)) : [];

@@ -28,7 +28,7 @@ function LeaveIcon() {
 export default function RoomControls() {
   const room = useGameStore(state => state.room);
   const { playerAction, leaveRoom } = useGameActions();
-  const active = !!room?.player2Id && (room.status === 'playing' || room.status === 'RPS');
+  const active = room?.legalActions?.actions.includes('concede') ?? (!!room?.player2Id && room.status === 'playing');
   return <div className="room-controls">
     {active && <AutoPassControl />}
     {active && <button onClick={() => {

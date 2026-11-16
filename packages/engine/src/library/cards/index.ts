@@ -79,7 +79,6 @@ import card35 from './workbook/nature-gift.json';
 import card36 from './workbook/nether-ancient-land.json';
 import card37 from './workbook/okair-mountains.json';
 import card38 from './workbook/okair-tomb.json';
-import card39 from './development/paper.json';
 import card40 from './workbook/phantom-captain.json';
 import card41 from './workbook/phantom-castle.json';
 import card42 from './workbook/phantom-land-soldier.json';
@@ -90,8 +89,6 @@ import card46 from './workbook/pursuit-of-purifying-fire.json';
 import card47 from './workbook/raging-sea-power.json';
 import card48 from './st01a/red-wolf.json';
 import card49 from './st01a/rise-of-power.json';
-import card50 from './development/rock.json';
-import card51 from './development/scissors.json';
 import card52 from './workbook/sea-city-noble.json';
 import card53 from './workbook/sea-depths.json';
 import card54 from './workbook/sea-domain.json';
@@ -223,7 +220,6 @@ const cards: Record<string, unknown> = {
   'nether-ancient-land': card36,
   'okair-mountains': card37,
   'okair-tomb': card38,
-  paper: card39,
   'phantom-captain': card40,
   'phantom-castle': card41,
   'phantom-land-soldier': card42,
@@ -234,8 +230,6 @@ const cards: Record<string, unknown> = {
   'raging-sea-power': card47,
   'red-wolf': card48,
   'rise-of-power': card49,
-  rock: card50,
-  scissors: card51,
   'sea-city-noble': card52,
   'sea-depths': card53,
   'sea-domain': card54,

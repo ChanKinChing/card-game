@@ -105,6 +105,11 @@
     "originalSubsetSemanticCatalogHash": "4d4337b0ce4895540bcd5b780b1b46cf4f40abbbc242d4dd655fa410af004e26",
     "changes": "Nine Scorch definitions now describe relic destruction and exclude equipment from the opponent target selector."
   },
+  "lobbyRpsRevision": {
+    "retiredCardIds": ["paper", "rock", "scissors"],
+    "semanticCatalogHash": "540abfb0b2b6eda5e50da90ded1a8c2a41d1e09cd6aae4e26a2a6c083f2c94be",
+    "originalSubsetSemanticCatalogHash": "12452e201e23723a8b8de4b5254ff43fac58337b671949e94e0e53b9d04eab6e"
+  },
   "listenerMigration": {
     "semanticCatalogHash": "a7b5798002bbbcec0530b8739d033f7bf095690f5bc62ff4d0c43250dee7a8b8",
     "originalSubsetSemanticCatalogHash": "9edfd6af83ae2910ceb3b98875433ad469b973357b32f3854935572fff08adf6",

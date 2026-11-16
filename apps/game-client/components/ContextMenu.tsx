@@ -56,7 +56,7 @@ export default function ContextMenu() {
     const actionId = option.actionId;
     const data = contextMenu.choosePayment && (actionId === ACTION_IDS.castSpell || actionId === ACTION_IDS.activateAbility)
       ? { ...option.data, choosePayment: true } : option.data;
-    if (actionId === ACTION_IDS.castSpell || actionId === ACTION_IDS.activateAbility) {
+    if (option.nextInput === 'targets' && (actionId === ACTION_IDS.castSpell || actionId === ACTION_IDS.activateAbility)) {
       const card = findCard(contextMenu.cardUuid);
       const targetingState = card ? createTargetingState(card, contextMenu.zone, actionId, data, room ?? undefined) : null;
       if (targetingState) {

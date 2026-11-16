@@ -9,7 +9,7 @@
   "cardTypes": [
     "Spell"
   ],
-  "rulesText": "主：公開牌組頂三張卡，將其中一張「冰龍」卡加入手牌，其餘按喜好順序放到牌組底。若場上有「冰龍」僕從，再執行一次。",
+  "rulesText": "主：公開牌組頂三張卡，將其中一張「冰龍」卡加入手牌，其餘按喜好順序放到牌組底。若我方場上有「冰龍」僕從，再執行此效果一次。",
   "onCastEffects": [
     {
       "family": "cards",
@@ -46,6 +46,7 @@
             "id": "count",
             "args": {
               "scope": {
+                "controller": "self",
                 "zones": [
                   "battlefield"
                 ],
