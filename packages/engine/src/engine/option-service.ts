@@ -1,40 +1,13 @@
-import { planCounterCosts } from './counter-costs';
 import { CardCharacteristicService } from './card-characteristic-service';
-// src/engine/option-service.ts
-import { ActionValidator } from './action-validator';
 import { isManaAbility, manaAbilities, manaOutput } from './mana-abilities';
-import { tapForManaHandler } from './handlers/tap-for-mana-handler';
-import { validateLandPlay } from './handlers/play-land-handler';
+import { inspectPlayerAction } from './player-action-query';
 import { landPlayLimit } from '../config';
 import { describeActionCost as describeCost } from '../shared/action-cost-description';
 import { ACTION_IDS, type ActionIdOrAbility } from '../types/action.ids';
 import type { GameRoom, PlayerId } from '../types/game.room.types';
 import type { CardInstance } from '../types/card.types';
-import type { AuthoredActionCost } from '../types/effect.types';
-import {
-  prepareAnnouncement,
-  spellAnnouncementDefinition,
-  abilityAnnouncementDefinition,
-  type AnnouncementDefinition,
-} from './announcement-values';
-
-/** Only unresolved alternatives/numbers defer affordability; fixed extras have a known total. */
-function optionPaymentCost(
-  card: CardInstance,
-  definition: AnnouncementDefinition,
-  room: GameRoom,
-  playerId: string,
-  cast = false,
-): { cost?: AuthoredActionCost; error?: string } {
-  // Guard: unresolved choices mean the total is not yet knowable.
-  if (!cast && (definition.numericDeclarations?.length || definition.alternativeCosts?.length)) return {};
-
-  if (!cast && definition.additionalCost === undefined) return { cost: definition.cost };
-
-  const announcement = prepareAnnouncement(card, definition, {}, cast ? { room, playerId } : undefined);
-
-  return announcement.success ? { cost: announcement.cost } : { error: announcement.reason };
-}
+import type { PendingChoice } from '../types/choice.types';
+import { prepareAnnouncement, spellAnnouncementDefinition } from './announcement-values';
 
 export interface ActionOption {
   actionId: ActionIdOrAbility;
@@ -42,10 +15,18 @@ export interface ActionOption {
   description?: string;
   disabled?: boolean;
   disabledReason?: string;
+  nextInput?: PendingChoice['kind'];
   /** Marked true when the option should not be rendered (e.g. redundant with left-click). */
   hidden?: boolean;
   /** Handler-specific selection, forwarded with the chosen option. */
   data?: Record<string, unknown>;
+}
+
+function actionOption(room: GameRoom, playerId: PlayerId, card: CardInstance, option: ActionOption): ActionOption {
+  const result = inspectPlayerAction(room, playerId, option.actionId, { ...option.data, cardUuid: card.uuid });
+  if (result.kind === 'unavailable') return { ...option, disabled: true, disabledReason: result.reason };
+  if (result.kind === 'input') return { ...option, disabled: false, nextInput: result.choice.kind };
+  return { ...option, disabled: false };
 }
 
 export class OptionService {
@@ -102,11 +83,10 @@ export class OptionService {
     // Lands have their own action and never go on the stack.
     if (blueprint.cardTypes.includes('Land')) {
       const data = { cardUuid: card.uuid, zoneRevision: card.state.zoneRevision ?? 0 };
-      const validation = validateLandPlay(room, playerId, data);
       const limit = landPlayLimit(room.setup);
 
       return [
-        {
+        actionOption(room, playerId, card, {
           actionId: ACTION_IDS.playLand,
           label: 'Play land',
           data: { zoneRevision: data.zoneRevision },
@@ -116,32 +96,25 @@ export class OptionService {
             0,
             limit - (room.turnHistory?.landPlays?.[playerId] ?? 0),
           )} of ${limit} land plays remaining this turn`,
-          disabled: !validation.success,
-          disabledReason: validation.success ? undefined : validation.reason,
-        },
+        }),
+        ...this.getActivatedOptions(room, playerId, card),
       ];
     }
 
     const announced = !!blueprint.numericDeclarations?.length || !!blueprint.castRequirements.alternativeCosts?.length;
-    const payment = optionPaymentCost(card, spellAnnouncementDefinition(blueprint), room, playerId, true);
-    const canPlay = payment.error
-      ? { valid: false, reason: payment.error }
-      : ActionValidator.canActivate(room, playerId, card, { ...blueprint.castRequirements, cost: payment.cost });
-
+    const payment = prepareAnnouncement(card, spellAnnouncementDefinition(blueprint), {}, { room, playerId });
     const substitution = CardCharacteristicService.castManaSubstitution(room, card, playerId);
-    const price = payment.cost ? describeCost(payment.cost) : 'No additional cost';
+    const price = payment.success && payment.cost ? describeCost(payment.cost) : 'No additional cost';
     const details = announced
       ? [blueprint.castRequirements.alternativeCosts?.length ? 'Choose how to pay' : 'Announce and pay the complete cost']
       : [price, blueprint.rulesText];
     if (substitution) details.push(`You can pay ${substitution.colors.join(' or ')} with ${substitution.from} this turn`);
 
-    options.push({
+    options.push(actionOption(room, playerId, card, {
       actionId: ACTION_IDS.castSpell,
       label: 'Cast spell',
       description: details.filter(Boolean).join(' · '),
-      disabled: !canPlay.valid,
-      disabledReason: canPlay.valid ? undefined : canPlay.reason,
-    });
+    }));
 
     return [...options, ...this.getActivatedOptions(room, playerId, card)];
   }
@@ -151,46 +124,17 @@ export class OptionService {
 
     for (const { abilityIndex, ability } of manaAbilities(card, room)) {
       const output = manaOutput(ability);
-
-      for (const manaColor of output?.colors ?? []) {
-        const data = { abilityId: ability.id, abilityIndex, manaColor };
-
-        // Preview a possible discard selection for affordability; the command
-        // still asks the player to choose the actual cards before paying.
-        const discardUuids = room.players[playerId].hand
-          .filter((candidate) => candidate.uuid !== card.uuid)
-          .slice(0, ability.cost.discard ?? 0)
-          .map((candidate) => candidate.uuid);
-
-        const counters = planCounterCosts(room, playerId, card, ability.cost.removeCounters, undefined, true);
-        const counterPayments = counters.success ? counters.payments : undefined;
-        const validation = tapForManaHandler.validate(room, playerId, {
-          cardUuid: card.uuid,
-          ...data,
-          discardUuids,
-          counterPayments,
-        });
-
-        options.push({
+      if (!output) continue;
+      for (const manaColor of output.colors) {
+        const verb = ability.cost.tap ? 'Tap' : ability.cost.untap ? 'Untap' : 'Activate';
+        options.push(actionOption(room, playerId, card, {
           actionId: ACTION_IDS.tapForMana,
-          data,
-          label:
-            (ability.cost.tap ? 'Tap' : ability.cost.untap ? 'Untap' : 'Activate') +
-            ': add ' +
-            output!.amount +
-            ' ' +
-            manaColor +
-            ' mana',
+          data: { abilityId: ability.id, abilityIndex, manaColor },
+          label: verb + ': add ' + output.amount + ' ' + manaColor + ' mana',
           description: describeCost(ability.cost),
-          disabled: !validation.success,
-          disabledReason: validation.success ? undefined : validation.reason,
-        });
+        }));
       }
     }
-
-    // Attack option removed — attacks are now declared as a batch via
-    // declareAttackersHandler during declareAttackersStep (MTG CR 508).
-    // The PhaseBar provides the "Declare Attackers" button instead.
 
     // Activated abilities from card definition (non-mana abilities only —
     // mana abilities are already covered by the "Tap for Mana" option above).
@@ -207,24 +151,7 @@ export class OptionService {
         !isManaAbility(ability) &&
         (ability.allowedZones ?? ['battlefield']).includes(card.state.zone as 'hand' | 'battlefield')
       ) {
-        const payment = optionPaymentCost(card, abilityAnnouncementDefinition(ability), room, playerId);
-        const canActivate = payment.error
-          ? { valid: false, reason: payment.error }
-          : ActionValidator.canActivate(
-              room,
-              playerId,
-              card,
-              {
-                allowedZones: ability.allowedZones ?? ['battlefield'],
-                speed: ability.castSpeed,
-                allowedPhases: ability.allowedPhases,
-                cost: payment.cost,
-              },
-              'activate',
-              ability.id,
-            );
-
-        options.push({
+        options.push(actionOption(room, playerId, card, {
           actionId: ACTION_IDS.activateAbility,
           data: { abilityId: ability.id },
           label: `Activate: ${ability.id}`,
@@ -234,9 +161,7 @@ export class OptionService {
                 describeCost(ability.cost),
                 ...(ability.additionalCost ? [describeCost(ability.additionalCost)] : []),
               ].join(', '),
-          disabled: !canActivate.valid,
-          disabledReason: canActivate.valid ? undefined : canActivate.reason,
-        });
+        }));
       }
     }
 

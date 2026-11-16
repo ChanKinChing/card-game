@@ -47,9 +47,6 @@
             "minTargets": 1,
             "maxTargets": 1
           },
-          "onKill": {
-            "destination": "exile"
-          },
           "recordOutcome": {
             "name": "ghostaxe-kill",
             "kind": "killed"

@@ -49,16 +49,16 @@ describe('PhaseBar debug integration', () => {
     let html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('No attacks'); expect(html).not.toContain('disabled');
     expect(html).not.toContain('Pass Priority');
-    room.combatDeclarations = { attackers: true, blockers: false }; room.declarationPlayerId = null; room.priorityPlayerId = 'player1';
-    useGameStore.setState({ room: { ...room } });
+    useGameStore.setState({ room: createTestRoom({ phase: 'declareAttackersStep', priorityPlayerId: 'player1',
+      combatDeclarations: { attackers: true, blockers: false }, debugMode: 'off' }) });
     html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).not.toContain('No attacks'); expect(html).toContain('Continue');
   });
   it('offers blocker choices to the defender independently of priority', () => {
-    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null }), myPlayerId: 'player2' });
+    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null }, 'player2'), myPlayerId: 'player2' });
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('No blocks'); expect(html).not.toContain('Pass Priority');
-    useGameStore.setState({ myPlayerId: 'player1' });
+    useGameStore.setState({ room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null }), myPlayerId: 'player1' });
     expect(renderToStaticMarkup(createElement(PhaseBar))).not.toContain('No blocks');
   });
   it('labels postcombat main and offers no second combat shortcut', () => {
@@ -87,9 +87,9 @@ describe('PhaseBar debug integration', () => {
   });
 
   it('allows the player without priority to resolve an open stack', () => {
-    const room = createTestRoom({ debugMode: 'stack' });
-    // Rendering only consumes stack length, so no effect execution fixture is needed.
+    const room = createTestRoom({ debugMode: 'stack' }, 'player2');
     room.stack.length = 1;
+    room.legalActions = { actions: ['resolve_stack', 'concede'] };
     useGameStore.setState({ room, myPlayerId: 'player2' });
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('Resolve Stack');
@@ -136,7 +136,7 @@ describe('PhaseBar debug integration', () => {
   });
 
   it('offers one no-block action for an empty draft and no phase action while targeting', () => {
-    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null, debugMode: 'off' }), myPlayerId: 'player2',
+    useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareBlockersStep', priorityPlayerId: null, debugMode: 'off' }, 'player2'), myPlayerId: 'player2',
       combatSelection: { attackers: [], blockerPairs: [], pendingBlocker: null } });
     const html = renderToStaticMarkup(createElement(PhaseBar));
     expect(html).toContain('No blocks'); expect(html).not.toContain('Confirm Blockers (0)');

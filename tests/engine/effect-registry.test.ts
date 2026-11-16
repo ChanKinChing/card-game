@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EffectRegistry } from '@engine/effect-registry';
 import { createTestRoom } from '../helpers/test-room-factory';
+import { creature } from '../helpers/combat-fixture';
 import { gameReducer } from '@engine/game-reducer';
 import { instantiateCard } from '@library/card-factory';
 import type { GameMutation } from '@shared/game-mutation.types';
@@ -44,6 +45,52 @@ describe('EffectRegistry', () => {
 
   beforeEach(() => {
     room = createTestRoom();
+  });
+
+
+  describe('effects with a stale target or an ended combat', () => {
+    it('leaves the stack alone for a spent counter target or an object outside the stack', () => {
+      const pending = makeStackObj({ uuid: 'pending' });
+      const countered = makeStackObj({ uuid: 'already-countered', countered: true });
+      room.stack = [pending, countered];
+      const effect = makeEffect({ action: 'COUNTER', targets: [
+        { targetType: 'permanent', cardUuid: pending.source.uuid },
+        { targetType: 'spell', stackUuid: 'resolved' },
+        { targetType: 'stack', stackUuid: countered.uuid },
+        { targetType: 'spell', stackUuid: pending.uuid },
+      ] });
+      expect(EffectRegistry.COUNTER(room, makeStackObj(), effect)).toEqual([
+        { type: 'COUNTER_STACK', stackUuid: pending.uuid },
+      ]);
+    });
+
+    it('cancels only an attacker still in combat', () => {
+      const attacker = creature('attacker', 'player2');
+      const spectator = creature('spectator', 'player2');
+      room.battlefield = [attacker, spectator];
+      room.combat = [{ uuid: attacker.uuid, attacker, attackerPower: 2, blockers: [] }];
+      const effect = makeEffect({ action: 'CANCEL_ATTACK', targets: [
+        { targetType: 'player', playerId: 'player2' },
+        { targetType: 'permanent', cardUuid: 'gone' },
+        { targetType: 'permanent', cardUuid: spectator.uuid },
+        { targetType: 'permanent', cardUuid: attacker.uuid },
+      ] });
+      apply(EffectRegistry.CANCEL_ATTACK(room, makeStackObj(), effect));
+      expect(room.combat).toEqual([]);
+      expect(room.battlefield).toEqual([attacker, spectator]);
+    });
+
+    it('does not spend randomness on a zero discard or an absent player', () => {
+      const random = vi.fn(() => 0.1);
+      const object = makeStackObj();
+      const effect = makeEffect({ action: 'DISCARD_RANDOM_FROM_HAND', params: { amount: 0 },
+        targets: [{ targetType: 'player', playerId: 'player1' }] });
+      expect(EffectRegistry.DISCARD_RANDOM_FROM_HAND(room, object, effect, { random })).toEqual([]);
+      expect(EffectRegistry.DISCARD_RANDOM_FROM_HAND(room, object, { ...effect, params: { amount: 1 },
+        targets: [{ targetType: 'player', playerId: 'departed' }] }, { random })).toEqual([]);
+      expect(random).not.toHaveBeenCalled();
+      expect(room.players.player1.hand).toHaveLength(1);
+    });
   });
 
   describe('DRAW', () => {

@@ -45,11 +45,10 @@ export default function PermanentHalf({ cards, side, attachments, onPreview }: P
   ];
   const combatants = new Set(room?.combat.flatMap(group =>
     [group.attacker, ...group.blockers].map(card => cardAnchor('battlefield', card))));
-  const draftingCombat = side === 'you' && room?.status === 'playing' && room.stack.length === 0 &&
-    ((room.phase === 'declareAttackersStep' && room.activeTurnPlayerId === room.viewerId && !room.combatDeclarations?.attackers) ||
-      (room.phase === 'declareBlockersStep' && room.activeTurnPlayerId !== room.viewerId && !room.combatDeclarations?.blockers));
+  const declaration = room?.legalActions?.combat;
+  const combatCandidates = new Set(declaration?.actionId === 'declare_attackers' ? declaration.attackerUuids : declaration?.blockerUuids);
   const needsIndividualSlot = (card: CardView) => combatants.has(cardAnchor('battlefield', card)) ||
-    (draftingCombat && card.cardTypes.includes('Creature')) ||
+    (side === 'you' && combatCandidates.has(card.uuid)) ||
     (targeting?.zone === 'battlefield' && targeting.cardUuid === card.uuid) ||
     candidates.some(target => (target.targetType === 'card' || target.targetType === 'permanent') &&
       target.cardUuid === card.uuid && (target.zoneRevision === undefined || target.zoneRevision === (card.state.zoneRevision ?? 0)));

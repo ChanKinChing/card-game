@@ -5,7 +5,8 @@ import type { GameOutcome } from '@card-game/engine/types/game.room.types';
 import type { ManaPool } from '@card-game/engine/types/game.player.types';
 import type { TargetPointer, TargetingDefinition } from '@card-game/engine/types/effect.types';
 import type { Versioned } from '../version';
-import type { ActionIdOrAbility } from '../actions/action-ids';
+import type { CombatDeclarationInput } from '@card-game/engine/types/action.ids';
+import type { ActionId, ActionIdOrAbility } from '../actions/action-ids';
 
 export interface TargetGroupView {
   id: string;
@@ -15,6 +16,7 @@ export interface TargetGroupView {
 export interface ActionOption {
   actionId: ActionIdOrAbility; label: string; description?: string; disabled?: boolean;
   disabledReason?: string; hidden?: boolean; data?: Record<string, unknown>;
+  nextInput?: OwnedChoiceView['kind'];
 }
 /** Public descriptions of applied effects. Source names are optional. */
 export type PermanentEffectView = {
@@ -76,6 +78,7 @@ export interface PlayerView extends Versioned {
   players: Record<string, PlayerStateView>; phase: Phase; status: GameStatus; debugMode: DebugMode;
   turnNumber: number; outcome?: GameOutcome; engineState: 'waiting_for_player' | 'resolving_stack' | 'state_based_actions' | 'game_over';
   activeTurnPlayerId: string; priorityPlayerId: string | null; lastPassedPlayerId: string | null;
+  legalActions?: { actions: ActionId[]; combat?: CombatDeclarationInput };
   declarationPlayerId: string | null; landPlayLimit: number;
   turnHistory: { landPlays: Record<string, number> };
   stack: StackView[]; battlefield: CardView[]; combat: CombatView[];

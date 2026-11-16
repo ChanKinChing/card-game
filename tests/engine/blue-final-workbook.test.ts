@@ -271,3 +271,71 @@ describe('final blue workbook cards', () => {
     expect(ids(engine.roomState.players.player1.hand)).toEqual([taken.uuid]);
   });
 });
+
+it('Eternal Sea mills the opponent’s top two cards on entry without spending blue again', () => {
+  const engine = game();
+  const sea = card('eternal-sea', 'hand');
+  engine.roomState.players.player1.hand = [sea];
+  const library = ids(engine.roomState.players.player2.deck);
+  expect(cast(engine, sea).success).toBe(true);
+  resolve(engine);
+  expect(engine.roomState.players.player2.graveyard).toEqual([]);
+  const postCastMana = engine.roomState.players.player1.mana.blue;
+  resolve(engine);
+  expect(ids(engine.roomState.players.player2.graveyard)).toEqual(library.slice(-2).reverse());
+  expect(ids(engine.roomState.players.player2.deck)).toEqual(library.slice(0, -2));
+  expect(engine.roomState.players.player1.mana.blue).toBe(postCastMana);
+});
+
+it('Loki produces blue and charges only on a friendly Giant entering', () => {
+  const loki = card('azure-sea-emperor-loki', 'battlefield');
+  const engine = game([loki]);
+  expect(engine.executePlayerAction('player1', 'tapForMana', {
+    cardUuid: loki.uuid, abilityId: 'produce-blue',
+  }).success).toBe(true);
+  const liveLoki = () => engine.roomState.battlefield.find(card => card.uuid === loki.uuid)!;
+  expect(engine.roomState.players.player1.mana.blue).toBe(6);
+  expect(liveLoki().state.isTapped).toBe(true);
+  expect(engine.roomState.stack).toEqual([]);
+
+  const enemyGiant = card('sea-city-noble', 'hand', 'player2');
+  engine.roomState.players.player2.hand = [enemyGiant];
+  engine.applyMutations([{
+    type: 'MOVE_CARD', cardUuid: enemyGiant.uuid, playerId: 'player2', from: 'hand', to: 'battlefield',
+  }]);
+  const nonGiant = card('empire-servant', 'hand');
+  engine.roomState.players.player1.hand = [nonGiant];
+  expect(cast(engine, nonGiant).success).toBe(true);
+  resolve(engine);
+  expect(engine.roomState.stack).toEqual([]);
+  expect(liveLoki().state.counters.charge ?? 0).toBe(0);
+
+  const friendlyGiant = card('sea-city-noble', 'hand');
+  engine.roomState.players.player1.hand = [friendlyGiant];
+  expect(cast(engine, friendlyGiant).success).toBe(true);
+  resolve(engine);
+  expect(engine.roomState.stack.at(-1)?.ability?.id).toBe('charge-giant-entry');
+  resolve(engine);
+  expect(liveLoki().state.counters.charge).toBe(1);
+});
+
+
+it.each([false, true])('Loki in the second seat can draw an already-blue card or face an empty library (%s)', empty => {
+  const loki = card('azure-sea-emperor-loki', 'battlefield', 'player2');
+  loki.state.counters.charge = 4;
+  const drawn = card('sea-city-noble', 'library', 'player1');
+  const engine = game([loki]);
+  engine.roomState.players.player1.deck = empty ? [] : [drawn];
+  engine.roomState.priorityPlayerId = 'player2';
+  expect(engine.executePlayerAction('player2', 'activate_ability', {
+    cardUuid: loki.uuid, abilityId: 'draw-opposing-card',
+  }).success).toBe(true);
+  resolve(engine);
+  const position = engine.roomState;
+  expect(ids(position.players.player2.hand)).toEqual(empty ? [] : [drawn.uuid]);
+  expect(position.battlefield.find(value => value.uuid === loki.uuid)?.state.counters.charge ?? 0).toBe(0);
+  const observation = buildPlayerView(position, 'player1').observations?.history.flatMap(value => value.cards ?? []);
+  expect(observation?.map(value => value.name) ?? []).toEqual(empty ? [] : [drawn.blueprint.name]);
+  const held = position.players.player2.hand[0];
+  if (held) expect(CardCharacteristicService.castManaSubstitution(position, held, 'player2')).toBeUndefined();
+});

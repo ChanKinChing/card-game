@@ -400,7 +400,7 @@ export class SyncService {
    * Build a StateDelta from ordered mutations replayed through the pure reducer.
    * Each mutation maps to one or more DeltaChanges (MOVE_CARD → remove + add).
    */
-  buildDelta(oldState: GameRoom, mutations: GameMutation[], context: { action: string; playerId: PlayerId; batches?: AppliedEventBatch[] }): StateDelta {
+  buildDelta(oldState: GameRoom, mutations: GameMutation[], context: { action: string; playerId: PlayerId; batches?: AppliedEventBatch[]; viewSeq?: number }): StateDelta {
     let currentState = oldState;
     const changes: DeltaChange[] = [];
 
@@ -416,9 +416,11 @@ export class SyncService {
       currentState = newState;
     }
 
+    const seq = context.viewSeq ?? this.nextSeq(currentState.roomId);
+    if (context.viewSeq !== undefined) this.restoreSeq(currentState.roomId, seq);
     const delta: StateDelta = {
       roomId: currentState.roomId,
-      seq: this.nextSeq(currentState.roomId),
+      seq,
       timestamp: Date.now(),
       action: context.action,
       playerId: context.playerId,
@@ -530,6 +532,8 @@ export class SyncService {
     this.sequences.set(roomId, next);
     return next;
   }
+
+  restoreSeq(roomId: string, seq: number): void { this.sequences.set(roomId, seq); }
 
   currentSeq(roomId: string): number { return this.sequences.get(roomId) ?? 0; }
 }

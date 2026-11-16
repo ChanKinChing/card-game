@@ -6,8 +6,8 @@ import { creature as authoritativeCreature } from './combat-fixture';
 import type { GameRoom } from '@shared/game.room.types';
 
 /** UI fixtures use the same projection boundary as real socket clients. */
-export function createTestRoom(overrides?: Partial<GameRoom>) {
-  return buildPlayerView(authoritativeRoom({ roomId: 'room', ...overrides }), 'player1');
+export function createTestRoom(overrides?: Partial<GameRoom>, viewerId = 'player1') {
+  return buildPlayerView(authoritativeRoom({ roomId: 'room', ...overrides }), viewerId);
 }
 export function instantiateCard(id: string) {
   const room = authoritativeRoom();

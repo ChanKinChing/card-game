@@ -100,6 +100,14 @@ describe('real ST01A card consumers using existing engine primitives', () => {
     expect(engine.roomState.players.player2.graveyard.map(c => c.uuid)).toEqual([opposing.uuid]);
     expect(engine.roomState.battlefield.map(c => c.uuid)).toEqual([source.uuid, own.uuid, creature.uuid]);
     expect(source.blueprint.rulesText).toContain('這個效果不能觸發Chain');
+    for (let pass = 0; pass < 2 && engine.roomState.priorityPlayerId; pass++) {
+      expect(engine.passPriority(engine.roomState.priorityPlayerId).success).toBe(true);
+    }
+    expect(engine.roomState.phase).toBe('declareBlockersStep');
+    expect(engine.executePlayerAction('player2', 'declare_blockers', {
+      assignments: [{ attackerUuid: source.uuid, blockerUuids: [creature.uuid] }],
+    }).success).toBe(true);
+    expect(engine.roomState.combat[0].blockers.map(card => card.uuid)).toEqual([creature.uuid]);
   });
 
   it.each([true, false])('offers the actual relic’s optional draw on opposing life loss (accept=%s)', accept => {
@@ -118,4 +126,33 @@ describe('real ST01A card consumers using existing engine primitives', () => {
     expect(engine.roomState.players.player1.hand).toHaveLength(accept ? 1 : 0);
     expect(engine.roomState.stack).toEqual([]);
   });
+});
+
+it('plays 血炎山 and taps it for exactly one red mana', () => {
+  const { engine, source } = game('land-red', 0);
+  const action = { cardUuid: source.uuid };
+  expect(engine.executePlayerAction('player1', 'play_land', { ...action, zoneRevision: source.state.zoneRevision ?? 0 }).success).toBe(true);
+  expect(engine.executePlayerAction('player1', 'tapForMana', action).success).toBe(true);
+  expect(engine.roomState.players.player1.mana.red).toBe(1);
+  expect(engine.roomState.battlefield.find(card => card.uuid === source.uuid)?.state.isTapped).toBe(true);
+  expect(engine.roomState.stack).toHaveLength(0);
+  expect(engine.executePlayerAction('player1', 'tapForMana', action).success).toBe(false);
+});
+
+it('烈焰獠牙 loses both effects when its land target leaves before resolution', () => {
+  const { engine, source } = game('flame-fangs', 2);
+  const land = instantiateCard('land-red');
+  land.state = { ...land.state, zone: 'battlefield', ownerId: 'player2', controllerId: 'player2' };
+  engine.roomState.battlefield = [land];
+  expect(engine.executePlayerAction('player1', 'cast_spell', {
+    cardUuid: source.uuid, targets: [{ targetType: 'permanent', cardUuid: land.uuid }],
+  }).success).toBe(true);
+  engine.applyMutations([{
+    type: 'MOVE_CARD', cardUuid: land.uuid, playerId: 'player2', from: 'battlefield', to: 'hand',
+  }]);
+  expect(engine.resolveTopOfStack().success).toBe(true);
+  expect(engine.roomState.players.player1.hand).toEqual([]);
+  expect(engine.roomState.players.player1.graveyard.map(card => card.uuid)).toEqual([source.uuid]);
+  expect(engine.roomState.players.player2.hand.map(card => card.uuid)).toContain(land.uuid);
+  expect(engine.roomState.players.player2.graveyard).toEqual([]);
 });

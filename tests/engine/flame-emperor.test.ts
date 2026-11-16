@@ -21,10 +21,17 @@ function choose(engine: GameEngine, ids: string[]) {
 describe('極炎皇帝 阿基里斯', () => {
   it.each(['player', 'permanent'] as const)('self-attack chooses one %s and deals a single multiplied hit from current opposing Scorch', target => {
     const { engine, emperor } = fixture();
+    const excluded = ['land-red', 'flame-ballista'].map(id => instantiateCard(id));
+    for (const card of excluded) {
+      card.state = { ...card.state, zone: 'battlefield', ownerId: 'player2', controllerId: 'player2' };
+    }
+    engine.roomState.battlefield.push(...excluded);
     expect(engine.executePlayerAction('player1', 'declare_attackers', { attackers: [{ cardUuid: emperor.uuid }] }).success).toBe(true);
     let choice = engine.roomState.pendingChoice!; if (choice.kind === 'number') throw new Error('Ordering');
     expect(choice.kind).toBe('ordering'); choose(engine, choice.options.map(option => option.id));
     choice = engine.roomState.pendingChoice!; if (choice.kind === 'number') throw new Error('Targets');
+    const offeredCards = choice.options.map(option => (option.value as { cardUuid?: string }).cardUuid);
+    for (const card of excluded) expect(offeredCards).not.toContain(card.uuid);
     choose(engine, [choice.options.find(option => target === 'player' ? (option.value as { playerId?: string }).playerId === 'player2' : (option.value as { cardUuid?: string }).cardUuid === 'first')!.id]);
     expect(engine.roomState.stack).toHaveLength(2);
     // Stack order can put either trigger first; decline the independent reveal if it is top.

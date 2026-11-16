@@ -174,6 +174,7 @@ describe('workbook cards unblocked by shared card queries', () => {
     engine.roomState.players.player1.deck = [deep, no, no2, match]; cast(engine, source);
     expect(ids(engine.roomState.pendingChoice!)).toContain(match.uuid);
     expect(ids(engine.roomState.pendingChoice!)).not.toContain(deep.uuid);
+    if (id === 'wind-spirit-prophet') expect(ids(engine.roomState.pendingChoice!)).not.toContain(no2.uuid);
     expect(engine.executePlayerAction('player1', 'choose', { choiceId: engine.roomState.pendingChoice!.id, choices: [] }).success).toBe(false);
     choose(engine, [match.uuid]);
     expect(ids(engine.roomState.pendingChoice!)).toEqual([no2.uuid, no.uuid]); choose(engine, [no.uuid, no2.uuid]);

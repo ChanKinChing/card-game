@@ -7,11 +7,26 @@ import type { CombatDeclaration } from '../../types/effect.types';
 import { CardCharacteristicService } from '../card-characteristic-service';
 import { CombatRuleRegistry } from '../combat-rules';
 import { captureSourceInformation } from '../source-information';
+import { actionPermission } from '../../shared/action-permissions';
 
 /** Find a card the given player controls on the battlefield. */
 function findCardOnBattlefield(room: GameRoom, playerId: PlayerId, cardUuid: string): CardInstance | undefined {
   return room.battlefield.find((c) =>
     c.uuid === cardUuid && CardCharacteristicService.resolveController(room, c) === playerId);
+}
+
+function attackerSourceError(room: GameRoom, card: CardInstance): string | undefined {
+  if (!CardCharacteristicService.resolveTypes(room, card).includes('Creature')) return `Card ${card.uuid} is not a creature`;
+  if (card.state.isTapped) return `${CardCharacteristicService.resolve(room, card).name} is already tapped`;
+  if (card.state.attackedThisTurn) return `${CardCharacteristicService.resolve(room, card).name} has already attacked this turn`;
+}
+
+/** Return creatures that may participate in the current attacker draft. */
+export function combatAttackerCandidates(room: GameRoom, playerId: PlayerId): string[] {
+  return room.battlefield.filter(card =>
+    CardCharacteristicService.resolveController(room, card) === playerId &&
+    !attackerSourceError(room, card) && CombatRuleRegistry.mayOverrideSummoningSickness(card) &&
+    actionPermission(room, playerId, card, 'attack').allowed).map(card => card.uuid);
 }
 
 export const declareAttackersHandler: ActionHandler = {
@@ -52,30 +67,16 @@ export const declareAttackersHandler: ActionHandler = {
         return { success: false, phase: 'validate', reason: `Creature ${cardUuid} not found on your battlefield` };
       }
 
-      if (!CardCharacteristicService.resolveTypes(room, card).includes('Creature')) {
-        return { success: false, phase: 'validate', reason: `Card ${cardUuid} is not a creature` };
-      }
+      const reason = attackerSourceError(room, card);
+      if (reason) return { success: false, phase: 'validate', reason };
 
-      // Guard: attacking taps the creature, so it must be untapped.
-      if (card.state.isTapped) {
-        return { success: false, phase: 'validate', reason: `${CardCharacteristicService.resolve(room, card).name} is already tapped` };
-      }
-
-      // Guard: summoning sickness, unless a combat rule grants haste.
-      if (
-        card.state.summoningSickness &&
-        !CombatRuleRegistry.canAttackWhileSummoningSick({
-          room,
-          playerId,
-          attackers: attackers.map(({ cardUuid }) => findCardOnBattlefield(room, playerId, cardUuid)!).filter(Boolean),
-        }, card)
-      ) {
+      // Extension rules may use the complete declaration to grant permission to attack.
+      if (card.state.summoningSickness && !CombatRuleRegistry.canAttackWhileSummoningSick({
+        room,
+        playerId,
+        attackers: attackers.map(({ cardUuid }) => findCardOnBattlefield(room, playerId, cardUuid)!).filter(Boolean),
+      }, card)) {
         return { success: false, phase: 'validate', reason: `${CardCharacteristicService.resolve(room, card).name} has summoning sickness` };
-      }
-
-      // Guard: one attack per creature per turn.
-      if (card.state.attackedThisTurn) {
-        return { success: false, phase: 'validate', reason: `${CardCharacteristicService.resolve(room, card).name} has already attacked this turn` };
       }
     }
 

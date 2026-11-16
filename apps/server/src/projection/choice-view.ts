@@ -1,5 +1,7 @@
 import { capturedChoiceAllowed, choiceSourceOrderVisible } from '@card-game/engine/engine/captured-windows';
 import { createHmac, randomBytes } from 'node:crypto';
+import type { PlayerActionInspection } from '@card-game/engine/engine/player-action-query';
+import { PROTOCOL_VERSION, type ActionInspectionMessage } from '@card-game/protocol';
 import type { GameRoom } from '@card-game/engine/types/game.room.types';
 import type { ChoiceView } from '@card-game/protocol';
 import { battlefieldCardLabel } from '@card-game/engine/shared/card-label';
@@ -111,4 +113,15 @@ export function decodeChoiceAnswer(
         }
       : {}),
   };
+}
+
+/** Speculative prompts use the same audience and identifier rules as live choices. */
+export function projectActionInspection(room: GameRoom, viewerId: string, inspection: PlayerActionInspection): ActionInspectionMessage {
+  if (inspection.kind !== 'input') return { protocolVersion: PROTOCOL_VERSION, ...inspection };
+  const live = room.pendingChoice === inspection.choice;
+  const choice = buildChoiceView({ ...room, pendingChoice: { ...inspection.choice, id: live ? inspection.choice.id : '' } }, viewerId);
+  if (!choice || choice.kind === 'waiting') return {
+    protocolVersion: PROTOCOL_VERSION, kind: 'unavailable', reason: 'Choice is not available to this player',
+  };
+  return { protocolVersion: PROTOCOL_VERSION, kind: 'input', stage: live ? 'pending' : 'preview', choice };
 }

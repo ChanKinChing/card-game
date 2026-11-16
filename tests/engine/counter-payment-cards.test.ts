@@ -72,6 +72,13 @@ describe('Hera counter payment card', () => {
       }).success,
     ).toBe(false);
     expect(charge(engine, source.uuid)).toBe(5);
+    engine.applyMutations([{ type: 'SET_TURN', playerId: 'player1', advance: true }]);
+    expect(engine.executePlayerAction('player1', 'activate_ability', {
+      cardUuid: source.uuid, abilityId: 'charged-destruction', targets: [{ targetType: 'permanent', cardUuid: second.uuid }],
+    }).success).toBe(true);
+    expect(engine.resolveTopOfStack().success).toBe(true);
+    expect(engine.roomState.players.player2.graveyard.map(card => card.uuid)).toContain(second.uuid);
+    expect(charge(engine, source.uuid)).toBe(0);
   });
   it('charges from friendly puppets entering and produces black mana', () => {
     const { engine, source } = game('phantom-queen-hera', 0);
@@ -152,4 +159,31 @@ describe('Aralaria optional counter payment card', () => {
     expect(charge(engine, source.uuid)).toBe(8);
     expect(engine.roomState.players.player1.hand).toHaveLength(1);
   });
+});
+
+it('healing through a real spell feeds Aralaria’s charge and Patrol’s draw once per turn', () => {
+  const { engine, source } = game('angel-emperor-aralaria', 0);
+  const patrol = card('heavenly-patrol');
+  engine.roomState.battlefield.push(patrol);
+  expect(engine.executePlayerAction('player1', 'tapForMana', { cardUuid: source.uuid, abilityId: 'mana' }).success).toBe(true);
+  expect(engine.roomState.players.player1.mana.yellow).toBe(6);
+  expect(engine.roomState.battlefield.find(card => card.uuid === source.uuid)?.state.isTapped).toBe(true);
+
+  for (const iteration of [1, 2, 3]) {
+    if (iteration === 3) engine.applyMutations([{ type: 'SET_TURN', playerId: 'player1', advance: true }]);
+    const heal = card('holy-energy-haste', 'hand');
+    engine.roomState.players.player1.hand.push(heal);
+    expect(engine.executePlayerAction('player1', 'cast_spell', { cardUuid: heal.uuid, modes: ['heal'] }).success).toBe(true);
+    expect(engine.resolveTopOfStack().success).toBe(true);
+    expect(engine.roomState.players.player1.life).toBe(20 + iteration);
+    expect(engine.roomState.stack.at(-1)?.ability?.id).toBe('healing-charge');
+    expect(engine.resolveTopOfStack().success).toBe(true);
+    expect(charge(engine, source.uuid)).toBe(iteration);
+    if (iteration !== 2) {
+      expect(engine.roomState.stack.at(-1)?.source.uuid).toBe(patrol.uuid);
+      expect(engine.resolveTopOfStack().success).toBe(true);
+    }
+    expect(engine.roomState.stack).toEqual([]);
+    expect(engine.roomState.players.player1.hand).toHaveLength(iteration === 3 ? 2 : 1);
+  }
 });

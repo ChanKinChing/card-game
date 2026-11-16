@@ -3,6 +3,7 @@ import type { StackObject } from '@card-game/engine/types/effect.types';
 import { MANA_COLORS } from '@card-game/engine/types/card.types';
 import { collectCards } from '@card-game/engine/shared/card-query';
 import { baseCardVisibleTo } from '@card-game/engine/shared/card-visibility';
+import { discoverPlayerControls } from '@card-game/engine/engine/player-action-query';
 import { declarationPlayer } from '@card-game/engine/shared/turn-utils';
 import { describeStackObject } from '@card-game/engine/shared/action-description';
 import { gameConfig, landPlayLimit } from '@card-game/engine/config';
@@ -74,6 +75,7 @@ function projectPlayerView(room: GameRoom, viewerId: string, effectsFor: ReturnT
     ...(room.outcome ? { outcome: { type: room.outcome.type, ...(room.outcome.type === 'win' ? { winnerId: room.outcome.winnerId } : {}),
       losses: room.outcome.losses.map(loss => ({ playerId: loss.playerId, reason: loss.reason })) } as PlayerView['outcome'] } : {}),
     activeTurnPlayerId: room.activeTurnPlayerId, priorityPlayerId: room.priorityPlayerId, lastPassedPlayerId: room.lastPassedPlayerId,
+    legalActions: discoverPlayerControls(room, viewerId),
     declarationPlayerId: declarationPlayer(room), landPlayLimit: landPlayLimit(room.setup),
     turnHistory: { landPlays: Object.fromEntries(Object.keys(room.players).map(id => [id, room.turnHistory?.landPlays?.[id] ?? 0])) },
     stack: room.stack.map(object => buildStackView(room, viewerId, object)),

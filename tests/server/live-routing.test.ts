@@ -74,8 +74,7 @@ describe('actual server routing', { timeout: 15_000 }, () => {
     const schedule = globalThis.setTimeout;
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback, ms, ...args) => {
       const timer = schedule(callback, ms, ...args);
-      const stack = new Error().stack ?? '';
-      if (ms === 30_000 && /apps[\\/]server[\\/]src[\\/]rooms[\\/]room-runtime\.ts/.test(stack)) roomTimers.push(timer);
+      if (ms === 30_000 && /apps[\\/]server[\\/]src[\\/]rooms[\\/]room-runtime\.ts/.test(new Error().stack ?? '')) roomTimers.push(timer);
       return timer;
     }) as typeof setTimeout);
     live = createGameApplication({ settings: { ...authConfig, guestRateLimit: { ...authConfig.guestRateLimit, limit: 500 } }, gameplay: () => ({ setup: gameConfig.setup, debugMode: gameConfig.debugMode }) });
@@ -236,12 +235,13 @@ describe('actual server routing', { timeout: 15_000 }, () => {
         if (data.allocations && typeof data.allocations === 'object') data.allocations = Object.fromEntries(Object.entries(data.allocations).map(([id, amount]) => [ids.get(id) ?? id, amount]));
       }
     }
+    const command = `${actionId} from seat ${view === m.a ? 1 : 2} after update ${m.a.deltas.at(-1)?.seq ?? 0}`;
     view.socket.emit('playerAction', { protocolVersion: 1, roomId: m.roomId, actionId, ...data });
     await vi.waitFor(() => {
-      expect(view.errors.slice(errors)).toEqual([]);
-      expect(m.a.deltas.length).toBeGreaterThan(lengths[0]);
-      expect(m.b.deltas.length).toBeGreaterThan(lengths[1]);
-    }, { timeout: waitMs });
+      expect(view.errors.slice(errors), command).toEqual([]);
+      expect(m.a.deltas.length, `${command}: seat 1 received no delta`).toBeGreaterThan(lengths[0]);
+      expect(m.b.deltas.length, `${command}: seat 2 received no delta`).toBeGreaterThan(lengths[1]);
+    }, { timeout: waitMs, interval: 10 });
     for (const receiver of [m.a, m.b]) expect(receiver.room).toEqual(JSON.parse(JSON.stringify(buildPlayerView(observed.get(m.roomId)!.roomState, receiver.room!.viewerId))));
   }
 

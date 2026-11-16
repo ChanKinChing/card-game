@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { AutoPassCoordinator } from './auto-pass';
+import { inspectPlayerAction, type PlayerActionInspection } from '@card-game/engine/engine/player-action-query';
 import { hasLegalNonPassAction } from '@card-game/engine/engine/legal-actions';
 import type { AutoPassStatus, LobbyRpsView, RpsPick } from '@card-game/protocol';
 import { gameConfig } from '@card-game/engine/config';
@@ -16,6 +17,7 @@ import { resolveRuntimeContext, type RuntimeContext } from '@card-game/engine/sh
 import type { StateStore } from './state-store';
 import type { RoomSettings } from '@card-game/engine/types/setup-config.types';
 import type { ActionPacket } from './action-packet';
+import { MatchInputs, openStoredMatch, recordMatchCommand, recoverMatch, type MatchRepository, type StoredMatch } from './match-recovery';
 import {
   bindSocket,
   createIdentityMaps,
@@ -32,6 +34,7 @@ export interface RoomDeltaRequest {
   action: string;
   playerId: PlayerId;
   batches: AppliedEventBatch[];
+  viewSeq?: number;
   recipients: ReadonlyMap<PlayerId, string>;
 }
 
@@ -59,7 +62,7 @@ export type JoinRoomResult =
 
 export type PlayerActionRuntimeResult =
   | { kind: 'error'; message: string; commandId: string; action: string }
-  | { kind: 'success'; commandId: string; action: string };
+  | { kind: 'success'; commandId: string; action: string; duplicate?: true };
 
 type RpsResult = { kind: 'error'; message: string } | { kind: 'pending'; room: GameRoom }
   | { kind: 'started'; room: GameRoom; firstPlayerId: PlayerId; picks: readonly [RpsPick, RpsPick] };
@@ -71,6 +74,8 @@ export class RoomRuntime {
   private readonly autoPass: AutoPassCoordinator;
   private readonly labContexts = new Map<string, RuntimeContext>();
   private readonly engines = new Map<string, GameEngine>();
+  private readonly matchHeads = new Map<string, StoredMatch>();
+  private readonly matchInputs = new Map<string, MatchInputs>();
   private readonly socketRooms = new Map<string, string>();
   private readonly departed = new Map<string, Set<string>>();
   private readonly destroyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -85,6 +90,7 @@ export class RoomRuntime {
     dependencies: Partial<RuntimeContext> = {},
     private readonly roomSettings?: () => RoomSettings,
     autoPassDelayMs = 5000,
+    private readonly recovery?: MatchRepository,
   ) {
     this.runtimeContext = resolveRuntimeContext({
       ...dependencies,
@@ -122,6 +128,25 @@ export class RoomRuntime {
       },
       changed: (socketId, status) => this.ports.autoPassChanged?.(socketId, status),
     }, autoPassDelayMs);
+  }
+
+  /** Load independently verified rooms before the application accepts connections. */
+  restoreMatches(restoreSeq: (roomId: string, seq: number) => void): void {
+    if (!this.recovery) return;
+    for (const match of this.recovery.matches()) {
+      try {
+        const recovered = recoverMatch(match, this.recovery.matchCommands(match.roomId, match.checkpointOrdinal));
+        this.replaceRoomEngine(recovered.room, recovered.lastBatchId);
+        this.store.saveRoom(recovered.room);
+        this.matchHeads.set(match.roomId, match);
+        restoreSeq(match.roomId, match.viewSeq);
+        serverLogger.info('match:recovered', 'Restored active match', { roomId: match.roomId, viewSeq: match.viewSeq });
+      } catch (error) {
+        serverLogger.error('match:recovery-failed', 'Active match could not be recovered', {
+          roomId: match.roomId, reason: error instanceof Error ? error.message : 'Unknown recovery failure',
+        });
+      }
+    }
   }
 
   installTestRoom(room:GameRoom, random:()=>number):void {
@@ -214,7 +239,19 @@ export class RoomRuntime {
     }
     const firstPlayerId = first === second || beats[first] === second ? room.player1Id : room.player2Id;
     const engine = this.getOrCreateEngine(roomId);
-    engine.startMatch(firstPlayerId);
+    try {
+      engine.startMatch(firstPlayerId);
+      if (this.recovery) {
+        const head = openStoredMatch(engine);
+        this.recovery.createMatch(head);
+        this.matchHeads.set(roomId, head);
+      }
+    } catch (error) {
+      if (!this.recovery) throw error;
+      this.replaceRoomEngine(room);
+      serverLogger.error('match:checkpoint-failed', 'Could not save the opening match checkpoint', { roomId });
+      return { kind: 'error', message: 'Could not save the match. Retry your opening pick.' };
+    }
     this.lobbyPicks.delete(roomId);
     const started = engine.roomState;
     this.store.saveRoom(started);
@@ -229,53 +266,91 @@ export class RoomRuntime {
     return room && this.socketRooms.get(socketId) === roomId ? this.optionService.getOptions(room, resolvePlayerId(this.identity, socketId), cardUuid, zone) : [];
   }
 
-  executePlayerAction(socketId: string, packet: ActionPacket): PlayerActionRuntimeResult {
+  inspectPlayerAction(socketId: string, packet: ActionPacket): PlayerActionInspection {
+    const room = this.store.getRoom(packet.roomId);
+    if (!room || this.socketRooms.get(socketId) !== packet.roomId)
+      return { kind: 'unavailable', reason: 'This socket is not seated in that room' };
+    const playerId = resolvePlayerId(this.identity, socketId);
+    const engine = this.engines.get(packet.roomId);
+    return engine ? engine.inspectPlayerAction(playerId, packet.actionId, packet.data)
+      : inspectPlayerAction(room, playerId, packet.actionId, packet.data);
+  }
+
+  executePlayerAction(
+    socketId: string, packet: ActionPacket, decode?: (room: GameRoom, playerId: PlayerId) => ActionPacket['data'],
+  ): PlayerActionRuntimeResult {
     const commandId = packet.commandId ?? this.runtimeContext.uuid();
     const playerId = resolvePlayerId(this.identity, socketId);
     const trace = serverLogger.withContext({ roomId: packet.roomId, commandId, action: packet.actionId, playerId });
+    const room = this.store.getRoom(packet.roomId);
+    const seated = this.socketRooms.get(socketId) === packet.roomId;
+    const head = room && seated ? this.matchHeads.get(packet.roomId) : undefined;
+    const accepted = head && this.recovery?.acceptedAction(packet.roomId, playerId, commandId);
+    let invalidOption = false;
+    try {
+      if (room && seated && !accepted && decode) packet = { ...packet, data: decode(room, playerId) };
+    } catch {
+      invalidOption = true;
+    }
+
     if (gameConfig.logging.actions) trace.info('command:received', 'Player action received', {
       cardUuid: packet.data.cardUuid,
       choiceId: packet.data.choiceId,
       ...choiceAnswerDetails(packet.data),
     });
-    const room = this.store.getRoom(packet.roomId);
     if (!room) {
       if (gameConfig.logging.actions) trace.warn('command:rejected', 'Room not found');
       return { kind: 'error', message: 'Room not found', commandId, action: packet.actionId };
     }
 
-    if (this.socketRooms.get(socketId) !== packet.roomId) return {
+    if (!seated) return {
       kind: 'error', message: 'This socket is not seated in that room', commandId, action: packet.actionId,
     };
 
+    if (accepted) return accepted === packet.actionId
+      ? { kind: 'success', commandId, action: accepted, duplicate: true }
+      : { kind: 'error', commandId, action: packet.actionId, message: 'Command ID already used' };
+
+    if (invalidOption) return { kind: 'error', commandId, action: packet.actionId, message: 'Invalid action option' };
+
     const engine = this.getOrCreateEngine(packet.roomId);
     const oldState = engine.roomState;
-    return engine.withCommandContext(packet.actionId, playerId, () => {
-      const result = engine.executePlayerAction(playerId, packet.actionId, packet.data);
-      if (!result.success) return {
-        kind: 'error', message: result.reason, commandId, action: packet.actionId,
-      } as const;
+    const lastBatchId = engine.lastBatchId;
+    const execute = () => engine.withCommandContext(packet.actionId, playerId,
+      () => engine.executePlayerAction(playerId, packet.actionId, packet.data), commandId);
+    let committedHead: StoredMatch | undefined;
+    let mutations: GameMutation[];
+    let batches: AppliedEventBatch[];
+    const reject = (message: string): PlayerActionRuntimeResult => ({ kind: 'error', message, commandId, action: packet.actionId });
+    try {
+      const { result, inputs } = head ? this.matchInputs.get(packet.roomId)!.record(execute) : { result: execute(), inputs: [] };
+      if (!result.success) {
+        if (head && engine.roomState !== oldState) this.replaceRoomEngine(oldState, lastBatchId);
+        return reject(result.reason);
+      }
+      mutations = result.mutations ?? [];
+      batches = engine.drainEventBatches();
+      if (head && this.recovery) {
+        const record = recordMatchCommand(head, engine, packet, playerId, commandId, inputs, batches, mutations.length > 0);
+        this.recovery.appendMatchCommand(packet.roomId, record.command, record.head);
+        committedHead = record.head;
+        this.matchHeads.set(packet.roomId, committedHead);
+      }
+    } catch (error) {
+      if (!head) throw error;
+      this.replaceRoomEngine(oldState, lastBatchId);
+      trace.error('match:commit-failed', 'Action could not be saved');
+      return reject('Could not save the action. Retry the command.');
+    }
 
-      const mutations = result.mutations ?? [];
-      const currentRoom = engine.roomState;
-      this.store.saveRoom(currentRoom);
-      const batches = engine.drainEventBatches();
-      if (mutations.length > 0) this.ports.publishDelta({
-        oldState,
-        room: currentRoom,
-        mutations,
-        action: packet.actionId,
-        playerId,
-        batches,
-        recipients: this.recipientsFor(currentRoom),
-      });
-      this.autoPass.refresh(packet.roomId);
-      return {
-        kind: 'success',
-        commandId,
-        action: packet.actionId,
-      } as const;
-    }, commandId);
+    const currentRoom = engine.roomState;
+    this.store.saveRoom(currentRoom);
+    if (mutations.length > 0) this.ports.publishDelta({
+      oldState, room: currentRoom, mutations, action: packet.actionId, playerId, batches,
+      recipients: this.recipientsFor(currentRoom), viewSeq: committedHead?.viewSeq,
+    });
+    this.autoPass.refresh(packet.roomId);
+    return { kind: 'success', commandId, action: packet.actionId };
   }
 
   /** Only the socket currently bound to this room can opt in or cancel its own auto-pass. */
@@ -338,6 +413,8 @@ export class RoomRuntime {
     for (const roomId of [...this.destroyTimers.keys()]) this.cancelScheduledDestroy(roomId);
     for (const engine of this.engines.values()) engine.dispose();
     this.engines.clear();
+    this.matchInputs.clear();
+    this.matchHeads.clear();
     this.labContexts.clear();
     this.lobbyPicks.clear();
     this.departed.clear();
@@ -346,9 +423,12 @@ export class RoomRuntime {
     this.identity.socketIdByPlayer.clear();
   }
 
-  private replaceRoomEngine(room: GameRoom): GameEngine {
+  private replaceRoomEngine(room: GameRoom, lastBatchId?: string): GameEngine {
     this.engines.get(room.roomId)?.dispose();
-    const engine = new GameEngine(room, this.labContexts.get(room.roomId) ?? this.runtimeContext);
+    const context = this.labContexts.get(room.roomId);
+    const inputs = !context && this.recovery ? new MatchInputs(this.runtimeContext) : undefined;
+    if (inputs) this.matchInputs.set(room.roomId, inputs);
+    const engine = new GameEngine(room, context ?? inputs ?? this.runtimeContext, undefined, lastBatchId);
     engine.initRoom();
     this.engines.set(room.roomId, engine);
     return engine;
@@ -385,8 +465,10 @@ export class RoomRuntime {
     this.autoPass.cancel(roomId);
     this.cancelScheduledDestroy(roomId);
     const room = this.store.getRoom(roomId);
-    const engine = this.engines.get(roomId)!;
-    engine.dispose();
+    if (this.matchHeads.has(roomId)) this.recovery?.deleteMatch(roomId);
+    this.matchHeads.delete(roomId);
+    this.matchInputs.delete(roomId);
+    this.engines.get(roomId)?.dispose();
     this.engines.delete(roomId);
     this.labContexts.delete(roomId);
     this.lobbyPicks.delete(roomId);

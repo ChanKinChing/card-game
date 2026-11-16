@@ -367,6 +367,24 @@ describe('informational and error handlers', () => {
     expect(info).not.toHaveBeenCalled();
   });
 
+
+  it('displays a completed opening only after its playing snapshot for the current room', () => {
+    const waiting = createTestRoom({ status: 'waiting' });
+    const playing = createTestRoom();
+    const message = { protocolVersion: 1, roomId: playing.roomId, firstPlayerId: 'player1', picks: ['rock', 'scissors'] };
+    const store = useGameStore.getState();
+    store.setRoomId(playing.roomId);
+    store.setRoom(waiting, 0);
+    send('startGame', message);
+    expect(useGameStore.getState().openingResult).toBeUndefined();
+    store.setRoom(playing, 0);
+    send('startGame', { ...message, roomId: 'stale-room' });
+    send('startGame', { ...message, picks: undefined });
+    expect(useGameStore.getState().openingResult).toBeUndefined();
+    send('startGame', message);
+    expect(useGameStore.getState().openingResult).toEqual({ firstPlayerId: 'player1', picks: ['rock', 'scissors'] });
+  });
+
   it('reports disconnect and transport failures', () => {
     const info = vi.spyOn(clientLogger, 'info');
     const error = vi.spyOn(clientLogger, 'error');

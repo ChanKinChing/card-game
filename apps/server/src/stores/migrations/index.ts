@@ -4,8 +4,9 @@ import { adminAuditSchema } from './002-admin-audit';
 import { browserSessionsSchema } from './003-browser-sessions';
 
 import { scenariosSchema } from './004-scenarios';
+import { matchRecoverySchema } from './005-match-recovery';
 
-export const migrations = [{ version: 1, sql: initialSchema }, { version: 2, sql: adminAuditSchema }, { version: 3, sql: browserSessionsSchema }, { version: 4, sql: scenariosSchema }] as const;
+export const migrations = [{ version: 1, sql: initialSchema }, { version: 2, sql: adminAuditSchema }, { version: 3, sql: browserSessionsSchema }, { version: 4, sql: scenariosSchema }, { version: 5, sql: matchRecoverySchema }] as const;
 export function migrate(database: Database.Database, steps: readonly { version: number; sql: string }[] = migrations): void {
   if(steps.some((step,index)=>step.version!==index+1))throw new Error('Invalid migration sequence');
   database.transaction(() => {

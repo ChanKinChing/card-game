@@ -9,6 +9,7 @@ import { getBlueprint, instantiateCard } from '@library/card-factory';
 import { buildCardView } from '@server/projection/card-view';
 import { buildChoiceView } from '@server/projection/choice-view';
 import type { CardInstance, CardZone } from '@shared/card.types';
+import { answerSingleRecipientCombat, creature } from '../helpers/combat-fixture';
 import { createTestRoom, fillTestLibraries } from '../helpers/test-room-factory';
 
 const engines: GameEngine[] = [];
@@ -280,6 +281,8 @@ describe('workbook expansion beyond blue', () => {
       cardUuid: spell.uuid, materialPayments: [{ cardUuid: emperor.uuid, zoneRevision }],
     });
     expect(castWith(1).success).toBe(false);
+    const input = { cardUuid: spell.uuid, materialPayments: [{ cardUuid: emperor.uuid, zoneRevision: 0 }] };
+    expect(engine.inspectPlayerAction('player1', 'cast_spell', input).kind).toBe('unavailable');
     expect(castWith(0).success).toBe(false);
     expect(engine.roomState.players.player1.mana.yellow).toBe(5);
     expect(engine.roomState.players.player1.hand.map(value => value.uuid)).toEqual([spell.uuid]);
@@ -343,41 +346,46 @@ describe('workbook expansion beyond blue', () => {
     }).success).toBe(true);
     resolve(engine);
     expect(engine.roomState.players.player1.hand).toHaveLength(2);
+    engine.applyMutations([{ type: 'SET_TURN', playerId: 'player1', advance: true }]);
+    engine.applyMutations([{ type: 'SET_LIFE', playerId: 'player2', amount: 18 }]);
+    expect(engine.roomState.stack.at(-1)?.source.uuid).toBe(camp.uuid);
+    resolve(engine);
+    expect(engine.roomState.players.player1.hand).toHaveLength(3);
   });
 
-  it.each([false, true])('Hera’s Phantom Spell uses printed cost and the own-main ceiling (%s)', main => {
-    const engine = game();
+  it.each([
+    { phase: 'stateMainPhase', turnPlayer: 'player1', graveyardCost: 4, ownMain: true },
+    { phase: 'beginCombatStep', turnPlayer: 'player1', graveyardCost: 0, ownMain: false },
+    { phase: 'stateMainPhase', turnPlayer: 'player2', graveyardCost: 4, ownMain: false },
+  ] as const)('Hera’s Phantom Spell uses printed costs in $phase on $turnPlayer’s turn', ({ phase, turnPlayer, graveyardCost, ownMain }) => {
+    const engine = game(...Array.from({ length: 5 }, () => card('phantom-land-soldier', 'battlefield')));
     const low = card('phantom-puppet', 'graveyard');
     const medium = card('phantom-puppet-legionnaire', 'graveyard');
-    const high = card('phantom-puppet-legionnaire', 'graveyard');
-    high.blueprint = {
-      ...high.blueprint,
-      castRequirements: { ...high.blueprint.castRequirements, cost: { mana: { black: 6 } } },
-    };
-    engine.roomState.players.player1.graveyard = [low, medium, high];
-    engine.applyMutations([{ type: 'ADD_CONTINUOUS_EFFECT', entry: {
-      source: 'fixture', layer: 8, scope: { cardUuid: high.uuid, zones: ['graveyard'] },
-      requiredZone: null, duration: 'PERMANENT', effect: { type: 'MANA_COST', mana: {} },
-    } }]);
-    expect(CardCharacteristicService.resolveManaValue(engine.roomState, high)).toBe(0);
-    if (!main) engine.roomState.phase = 'beginCombatStep';
+    const giant = card('phantom-giant', 'graveyard');
+    engine.roomState.players.player1.graveyard = [low, medium, giant];
+    engine.roomState.phase = phase;
+    engine.roomState.activeTurnPlayerId = turnPlayer;
+    expect(CardCharacteristicService.resolveManaValue(engine.roomState, giant)).toBe(graveyardCost);
     expect(cast(engine, card('hera-phantom-spell', 'hand')).success).toBe(true);
     resolve(engine);
     const choice = engine.roomState.pendingChoice;
     if (choice?.kind !== 'search') throw new Error('Expected the Puppet search');
-    expect(choice.options.map(option => option.id)).toEqual(main ? [low.uuid, medium.uuid] : [low.uuid]);
-    const chosen = main ? medium : low;
+    expect(choice.options.map(option => option.id)).toEqual(ownMain ? [low.uuid, medium.uuid] : [low.uuid]);
+    const chosen = ownMain ? medium : low;
     choose(engine, [chosen.uuid]);
     expect(live(engine, chosen).state.summonKind).toBe('effect');
   });
 
-  it.each([false, true])('Ice Dragon Call reads a fresh window for at most one repeat (%s)', repeat => {
-    const onBoard = card('ice-ridge-lord', 'battlefield', 'player2');
-    const engine = repeat ? game(onBoard) : game();
+  it.each([['none', []], ['opponent only', ['player2']], ['friendly', ['player1']], ['two friendly', ['player1', 'player1']]])
+  ('Ice Dragon Call reads a fresh window for at most one repeat (%s)', (_scenario, controllers) => {
+    const repeat = controllers.includes('player1');
+    const engine = game(...controllers.map(controller => card('ice-ridge-lord', 'battlefield', controller)));
     const [first, second] = ['ice-ridge-lord', 'frost-messenger'].map(id => card(id, 'library'));
     const [deep, spare, firstTop, firstBottom] = Array.from({ length: 4 }, () => card('sea-depths', 'library'));
     engine.roomState.players.player1.deck = [deep, second, spare, firstBottom, first, firstTop];
-    expect(cast(engine, card('ice-dragon-call', 'hand')).success).toBe(true);
+    const spell = card('ice-dragon-call', 'hand');
+    expect(spell.blueprint.rulesText).toContain('若我方場上有「冰龍」僕從，再執行此效果一次。');
+    expect(cast(engine, spell).success).toBe(true);
     resolve(engine);
     choose(engine, [first.uuid]);
     choose(engine, [firstTop.uuid, firstBottom.uuid]);
@@ -829,12 +837,16 @@ describe('workbook expansion beyond blue', () => {
   it('uses real source-scoped exile for Hera Ghostfire and keeps the reduction on survivors', () => {
     const victim = card('sea-patrol', 'battlefield', 'player2');
     const survivor = card('abyss-giant', 'battlefield', 'player2');
-    const engine = game(victim, survivor);
+    const ally = card('sea-patrol', 'battlefield');
+    const engine = game(victim, survivor, ally);
     expect(cast(engine, card('hera-ghostfire', 'hand')).success).toBe(true);
     resolve(engine);
     expect(engine.roomState.players.player2.exile?.map(item => item.uuid)).toEqual([victim.uuid]);
     engine.applyMutations([{ type: 'CLEAR_END_OF_TURN_EFFECTS' }]);
     expect(CardCharacteristicService.resolveToughness(engine.roomState, live(engine, survivor))).toBe(6);
+    expect(CardCharacteristicService.resolvePower(engine.roomState, live(engine, survivor))).toBe(survivor.blueprint.power! - 2);
+    expect(CardCharacteristicService.resolvePower(engine.roomState, live(engine, ally))).toBe(ally.blueprint.power);
+    expect(CardCharacteristicService.resolveToughness(engine.roomState, live(engine, ally))).toBe(ally.blueprint.toughness);
   });
 
   it('the production Ghostfire recovers only the card it just milled', () => {
@@ -899,28 +911,39 @@ describe('workbook expansion beyond blue', () => {
     expect(engine.roomState.players.player1.deck.at(-1)?.uuid).toBe(top);
   });
 
-  it('supports taking all revealed spells and exiling only the remaining revealed cards', () => {
+  it('Ivun takes all revealed spells once, including after the same card returns', () => {
     const engine = game();
     const outside = card('sea-depths', 'library');
     const spells = Array.from({ length: 3 }, () => card('sea-depths', 'library'));
     const lands = Array.from({ length: 5 }, () => card('sea-domain', 'library'));
     engine.roomState.players.player1.deck = [outside, ...spells, ...lands];
-    expect(cast(engine, card('heavenly-marquis-ivun', 'hand')).success).toBe(true);
+    const ivun = card('heavenly-marquis-ivun', 'hand');
+    expect(cast(engine, ivun).success).toBe(true);
     resolve(engine);
     resolve(engine);
     expect(new Set(engine.roomState.players.player1.hand.map(item => item.uuid))).toEqual(new Set(spells.map(item => item.uuid)));
     expect(new Set(engine.roomState.players.player1.exile?.map(item => item.uuid))).toEqual(new Set(lands.map(item => item.uuid)));
     expect(engine.roomState.players.player1.deck.map(item => item.uuid)).toEqual([outside.uuid]);
+    engine.applyMutations([{ type: 'MOVE_CARD', cardUuid: ivun.uuid, playerId: 'player1', from: 'battlefield', to: 'hand' }]);
+    engine.applyMutations([{ type: 'MOVE_CARD', cardUuid: ivun.uuid, playerId: 'player1', from: 'hand', to: 'battlefield' }]);
+    expect(live(engine, ivun).state.summonKind).toBe('effect');
+    expect(engine.roomState.stack).toEqual([]);
   });
 
   it('healing triggers Thunder Gate once and creates a vanilla 上使', () => {
     const gate = card('thunder-gate', 'battlefield');
     const engine = game(gate);
+    expect(engine.executePlayerAction('player1', 'tapForMana', { cardUuid: gate.uuid, abilityId: 'produce-yellow' }).success).toBe(true);
+    expect(engine.roomState.players.player1.mana.yellow).toBe(6);
+    expect(live(engine, gate).state.isTapped).toBe(true);
     engine.applyMutations([{ type: 'SET_LIFE', playerId: 'player1', amount: 21 }]);
     resolve(engine);
     const tokens = () => engine.roomState.battlefield.filter(value => value.isToken);
     expect(tokens()).toHaveLength(1);
     expect(tokens()[0].blueprint).toMatchObject({ power: 1, toughness: 1, subTypes: ['上使'], abilities: [] });
+    engine.applyMutations([{ type: 'MOVE_CARD', cardUuid: gate.uuid, playerId: 'player1', from: 'battlefield', to: 'hand' }]);
+    engine.applyMutations([{ type: 'MOVE_CARD', cardUuid: gate.uuid, playerId: 'player1', from: 'hand', to: 'battlefield' }]);
+    expect(live(engine, gate).state.isTapped).toBe(false);
     engine.applyMutations([{ type: 'SET_LIFE', playerId: 'player1', amount: 22 }]);
     expect(engine.roomState.stack).toHaveLength(0);
     expect(tokens()).toHaveLength(1);
@@ -1101,6 +1124,13 @@ describe('workbook expansion beyond blue', () => {
     choose(engine, ['yes']);
     expect(live(engine, friendly).state.isTapped).toBe(false);
     expect(CardCharacteristicService.resolveAbilities(engine.roomState, live(engine, enemy))).toEqual([]);
+    engine.applyMutations([{ type: 'UNTAP_CARD', cardUuid: enemy.uuid }]);
+    expect(CardCharacteristicService.resolveAbilities(engine.roomState, live(engine, enemy)).map(ability => ability.id))
+      .toEqual(enemy.blueprint.abilities.map(ability => ability.id));
+    engine.applyMutations([{ type: 'TAP_CARD', cardUuid: friendly.uuid }, { type: 'TAP_CARD', cardUuid: enemy.uuid }]);
+    expect(engine.roomState.stack).toEqual([]);
+    expect(engine.roomState.pendingChoice).toBeFalsy();
+    expect(live(engine, friendly).state.isTapped).toBe(true);
   });
 
   it('Galar marks the entering Wind Beast rather than the listener', () => {
@@ -1156,3 +1186,613 @@ describe('workbook expansion beyond blue', () => {
     expect(engine.roomState.combat).toHaveLength(1);
   });
 });
+
+it.each([true, false])('Phantom Giant mills three before its optional Puppet summon (summon: %s)', summon => {
+  const giant = card('phantom-giant', 'battlefield');
+  const engine = game(giant);
+  const deep = card('phantom-puppet', 'library');
+  const puppet = card('phantom-puppet', 'library');
+  const land = card('phantom-underworld', 'library');
+  const enemyKind = card('sea-patrol', 'library');
+  engine.roomState.players.player1.deck = [deep, land, puppet, enemyKind];
+
+  attackWith(engine, giant);
+  resolve(engine);
+  const player = engine.roomState.players.player1;
+  expect(player.deck.map(card => card.uuid)).toEqual([deep.uuid]);
+  expect(player.graveyard.map(card => card.uuid)).toEqual([enemyKind.uuid, puppet.uuid, land.uuid]);
+  const choice = engine.roomState.pendingChoice;
+  if (choice?.kind !== 'search') throw new Error('Expected graveyard Puppet search');
+  expect(choice.options.map(option => option.id)).toEqual([puppet.uuid]);
+  expect([choice.min, choice.max]).toEqual([0, 1]);
+  choose(engine, summon ? [puppet.uuid] : []);
+  expect(live(engine, puppet)?.state.summonKind).toBe(summon ? 'effect' : undefined);
+  expect(engine.roomState.players.player1.graveyard.some(card => card.uuid === puppet.uuid)).toBe(!summon);
+});
+
+it.each([true, false])('Ghostaxe gains attack only when its life reduction kills the target (lethal: %s)', lethal => {
+  const ghostaxe = card('phantom-ghostaxe', 'battlefield');
+  const target = card(lethal ? 'empire-servant' : 'abyss-giant', 'battlefield', 'player2');
+  const engine = game(ghostaxe, target);
+  const targetMaxLife = CardCharacteristicService.resolveToughness(engine.roomState, target);
+
+  attackWith(engine, ghostaxe);
+  const choice = engine.roomState.pendingChoice;
+  if (!choice || choice.kind === 'number') throw new Error('Expected an attack trigger target');
+  const option = choice.options.find(option => (option.value as { cardUuid?: string }).cardUuid === target.uuid);
+  if (!option) throw new Error('Expected the opposing creature as a target');
+  choose(engine, [option.id]);
+  resolve(engine);
+
+  expect(CardCharacteristicService.resolvePower(engine.roomState, live(engine, ghostaxe))).toBe(lethal ? 4 : 2);
+  expect(engine.roomState.players.player2.graveyard.map(card => card.uuid)).toEqual(lethal ? [target.uuid] : []);
+  expect(engine.roomState.players.player2.exile ?? []).toEqual([]);
+  if (!lethal) {
+    expect(CardCharacteristicService.resolveToughness(engine.roomState, live(engine, target))).toBe(targetMaxLife - 3);
+  }
+  engine.applyMutations([{ type: 'CLEAR_END_OF_TURN_EFFECTS' }]);
+  expect(CardCharacteristicService.resolvePower(engine.roomState, live(engine, ghostaxe))).toBe(2);
+  if (!lethal) {
+    expect(CardCharacteristicService.resolveToughness(engine.roomState, live(engine, target))).toBe(targetMaxLife - 3);
+  }
+});
+
+it.each(['pay', 'decline', 'unaffordable'] as const)('Beast Emperor Command orders the reveal remainder after paid deployment (%s)', decision => {
+  const engine = game();
+  const command = card('beast-emperor-command', 'hand');
+  const deep = card('wind-beast-rabbit', 'library');
+  const eligible = card('wind-beast-fox', 'library');
+  const wrongName = card('wind-spirit-prophet', 'library');
+  const land = card('beast-holy-land', 'library');
+  engine.roomState.players.player1.mana = {
+    red: 0, black: 0, green: decision === 'unaffordable' ? 3 : 4, blue: 0, white: 0, yellow: 0,
+  };
+  engine.roomState.players.player1.deck = [deep, land, wrongName, eligible];
+  expect(cast(engine, command).success).toBe(true);
+  resolve(engine);
+  if (decision !== 'unaffordable') choose(engine, [decision === 'pay' ? 'yes' : 'no']);
+  if (decision === 'pay') {
+    const deployment = engine.roomState.pendingChoice;
+    if (deployment?.kind !== 'search') throw new Error('Expected revealed creature search');
+    expect(deployment.options.map(option => option.id)).toEqual([eligible.uuid]);
+    choose(engine, [eligible.uuid]);
+  }
+  expect(live(engine, eligible)?.state.summonKind).toBe(decision === 'pay' ? 'effect' : undefined);
+  expect(engine.roomState.players.player1.mana.green).toBe(decision === 'decline' ? 1 : 0);
+  const returned = decision === 'pay' ? [land.uuid, wrongName.uuid] : [land.uuid, eligible.uuid, wrongName.uuid];
+  choose(engine, returned);
+  expect(engine.roomState.players.player1.deck.map(card => card.uuid)).toEqual([...returned.reverse(), deep.uuid]);
+  expect(engine.roomState.pendingChoice).toBeNull();
+});
+
+it('Heavenly Divine City summons one vanilla Angel through its entry trigger', () => {
+  const engine = game();
+  const city = card('heavenly-divine-city', 'hand');
+  expect(cast(engine, city).success).toBe(true);
+  resolve(engine);
+  expect(live(engine, city)).toBeDefined();
+  expect(engine.roomState.battlefield.filter(card => card.isToken)).toHaveLength(0);
+  resolve(engine);
+  const tokens = engine.roomState.battlefield.filter(card => card.isToken);
+  expect(tokens).toHaveLength(1);
+  expect(tokens[0]).toMatchObject({
+    blueprint: { power: 1, toughness: 1, subTypes: ['上使'], abilities: [] },
+    state: { controllerId: 'player1', summoningSickness: true },
+  });
+});
+
+it.each([true, false])('Heavenly Beast heals for yellow revealed cards and takes only a yellow land (land: %s)', hasLand => {
+  const engine = game();
+  const beast = card('heavenly-beast', 'hand');
+  const outside = card('angel-holy-land', 'library');
+  const candidate = card(hasLand ? 'angel-holy-land' : 'land-red', 'library');
+  const yellowNonland = card('winged-envoy', 'library');
+  const other = card('sea-domain', 'library');
+  engine.roomState.players.player1.deck = [outside, other, yellowNonland, candidate];
+  expect(cast(engine, beast).success).toBe(true);
+  resolve(engine);
+  resolve(engine);
+  expect(engine.roomState.players.player1.life).toBe(hasLand ? 22 : 21);
+  if (hasLand) {
+    const choice = engine.roomState.pendingChoice;
+    if (choice?.kind !== 'search') throw new Error('Expected yellow land search');
+    expect(choice.options.map(option => option.id)).toEqual([candidate.uuid]);
+    choose(engine, [candidate.uuid]);
+  }
+  const order = engine.roomState.pendingChoice;
+  if (order?.kind !== 'ordering') throw new Error('Expected exact remainder ordering');
+  const returned = hasLand ? [other.uuid, yellowNonland.uuid] : [other.uuid, candidate.uuid, yellowNonland.uuid];
+  expect(order.options.map(option => option.id).sort()).toEqual([...returned].sort());
+  choose(engine, returned);
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual(hasLand ? [candidate.uuid] : []);
+  expect(engine.roomState.players.player1.deck.map(card => card.uuid)).toEqual([...returned.reverse(), outside.uuid]);
+});
+
+it('Haer freezes three opposing creatures, then uses its damage sweep only once per game', () => {
+  const haer = card('wind-spirit-general-haer', 'hand');
+  const enemies = Array.from({ length: 4 }, () => card('sea-patrol', 'battlefield', 'player2'));
+  const ally = card('wind-beast-bean', 'battlefield');
+  const engine = game(ally, ...enemies);
+
+  expect(cast(engine, haer).success).toBe(true);
+  resolve(engine);
+  const choice = engine.roomState.pendingChoice;
+  if (!choice || choice.kind === 'number') throw new Error('Expected three entry targets');
+  const selected = new Set(enemies.slice(0, 3).map(card => card.uuid));
+  const available = choice.options.map(option => (option.value as { cardUuid?: string }).cardUuid);
+  expect(available.sort()).toEqual(enemies.map(card => card.uuid).sort());
+  choose(engine, choice.options.filter(option => selected.has((option.value as { cardUuid: string }).cardUuid))
+    .map(option => option.id));
+  resolve(engine);
+  for (const enemy of enemies) {
+    expect(live(engine, enemy).state.isTapped).toBe(selected.has(enemy.uuid));
+    expect(Boolean(live(engine, enemy).state.skipNextUntap)).toBe(selected.has(enemy.uuid));
+  }
+
+  const frozen = enemies[0];
+  const naturalUntap = { type: 'UNTAP_CARD', cardUuid: frozen.uuid, natural: true } as const;
+  engine.applyMutations([naturalUntap]);
+  expect(live(engine, frozen).state).toMatchObject({ isTapped: true, skipNextUntap: false });
+  engine.applyMutations([naturalUntap]);
+  expect(live(engine, frozen).state.isTapped).toBe(false);
+
+  const action = { cardUuid: haer.uuid, abilityId: 'deal-eight-to-enemies' };
+  expect(engine.executePlayerAction('player1', 'activate_ability', action).success).toBe(false);
+  engine.applyMutations([{ type: 'SET_SUMMONING_SICKNESS', cardUuid: haer.uuid, value: false }]);
+  expect(engine.executePlayerAction('player1', 'activate_ability', action).success).toBe(true);
+  expect(live(engine, haer).state.isTapped).toBe(true);
+  resolve(engine);
+  expect(engine.roomState.players.player2.graveyard.map(card => card.uuid).sort()).toEqual(enemies.map(card => card.uuid).sort());
+  expect(live(engine, ally).state.damageTaken).toBe(0);
+  engine.applyMutations([{ type: 'UNTAP_CARD', cardUuid: haer.uuid }]);
+  expect(engine.executePlayerAction('player1', 'activate_ability', action).success).toBe(false);
+});
+
+it.each([15, 16])('Far North Crown sweeps at life fifteen or lower (life: %s)', life => {
+  const crown = card('far-north-crown', 'battlefield');
+  const dragon = card('winter-drake', 'battlefield');
+  const enemies = [card('sea-patrol', 'battlefield', 'player2'), card('sea-city-noble', 'battlefield', 'player2')];
+  const enemyLand = card('sea-domain', 'battlefield', 'player2');
+  const engine = game(crown, dragon, ...enemies, enemyLand);
+  engine.roomState.players.player1.life = life;
+  const previousLibrary = engine.roomState.players.player2.deck.map(card => card.uuid);
+
+  expect(engine.executePlayerAction('player1', 'activate_ability', {
+    cardUuid: crown.uuid, abilityId: 'attach', targets: [{ targetType: 'permanent', cardUuid: dragon.uuid }],
+  }).success).toBe(true);
+  resolve(engine);
+  expect(CardCharacteristicService.resolvePower(engine.roomState, live(engine, dragon))).toBe(3);
+
+  const sweep = { cardUuid: crown.uuid, abilityId: 'crown-return' };
+  expect(engine.executePlayerAction('player1', 'activate_ability', sweep).success).toBe(true);
+  expect(live(engine, crown).state.isTapped).toBe(true);
+  resolve(engine);
+  const library = engine.roomState.players.player2.deck.map(card => card.uuid);
+  if (life === 15) {
+    expect(library.slice(0, 2).sort()).toEqual(enemies.map(card => card.uuid).sort());
+    expect(library.slice(2)).toEqual(previousLibrary);
+  } else {
+    expect(library).toEqual(previousLibrary);
+    for (const enemy of enemies) expect(live(engine, enemy)).toBeDefined();
+  }
+  expect(live(engine, dragon)).toBeDefined();
+  expect(live(engine, enemyLand)).toBeDefined();
+  engine.applyMutations([
+    { type: 'MOVE_CARD', cardUuid: crown.uuid, playerId: 'player1', from: 'battlefield', to: 'hand' },
+    { type: 'MOVE_CARD', cardUuid: crown.uuid, playerId: 'player1', from: 'hand', to: 'battlefield' },
+  ]);
+  expect(live(engine, crown).state.isTapped).toBe(false);
+  expect(engine.executePlayerAction('player1', 'activate_ability', sweep).success).toBe(false);
+});
+
+it.each(['recover', 'ineligible', 'decline'] as const)('Phantasm Altar recovers only its own qualifying mill and taps for black (%s)', decision => {
+  const engine = game();
+  const altar = card('phantasm-altar', 'hand');
+  const older = card('hera-ghostfire', 'graveyard');
+  const top = card(decision === 'ineligible' ? 'phantom-puppet' : 'hera-ghostfire', 'library');
+  engine.roomState.players.player1.hand = [altar];
+  engine.roomState.players.player1.deck.push(top);
+  engine.roomState.players.player1.graveyard = [older];
+  expect(engine.executePlayerAction('player1', 'play_land', { cardUuid: altar.uuid, zoneRevision: 0 }).success).toBe(true);
+  const mana = () => engine.executePlayerAction('player1', 'tapForMana', { cardUuid: altar.uuid, abilityId: 'produce-black' });
+  expect(live(engine, altar).state.isTapped).toBe(true);
+
+  resolve(engine);
+  choose(engine, [decision === 'decline' ? 'no' : 'yes']);
+  if (decision === 'recover') {
+    const choice = engine.roomState.pendingChoice;
+    if (choice?.kind !== 'search') throw new Error('Expected one recoverable card');
+    expect(choice.options.map(option => option.id)).toEqual([top.uuid]);
+    choose(engine, [top.uuid]);
+  }
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual(decision === 'recover' ? [top.uuid] : []);
+  expect(engine.roomState.players.player1.graveyard.map(card => card.uuid))
+    .toEqual(decision === 'ineligible' ? [older.uuid, top.uuid] : [older.uuid]);
+  expect(engine.roomState.players.player1.deck.some(card => card.uuid === top.uuid)).toBe(decision === 'decline');
+  expect(mana().success).toBe(false);
+  engine.applyMutations([{ type: 'UNTAP_CARD', cardUuid: altar.uuid }]);
+  const before = engine.roomState.players.player1.mana.black;
+  expect(mana().success).toBe(true);
+  expect(engine.roomState.players.player1.mana.black).toBe(before + 1);
+  expect(live(engine, altar).state.isTapped).toBe(true);
+});
+
+it.each(['recover', 'ineligible', 'decline'] as const)('Ghostfire Scythe grants its exact mill and recovery to the equipped Puppet (%s)', decision => {
+  const scythe = card('phantom-ghostfire-scythe', 'battlefield');
+  const host = card('phantom-land-soldier', 'battlefield');
+  const nonPuppet = card('winged-envoy', 'battlefield');
+  const engine = game(scythe, host, nonPuppet);
+  const top = card(decision === 'ineligible' ? 'phantom-puppet' : 'hera-ghostfire', 'library');
+  engine.roomState.players.player1.deck.push(top);
+  const attach = (target: CardInstance) => engine.executePlayerAction('player1', 'activate_ability', {
+    cardUuid: scythe.uuid, abilityId: 'attach', targets: [{ targetType: 'permanent', cardUuid: target.uuid }],
+  });
+  const basePower = CardCharacteristicService.resolvePower(engine.roomState, host);
+  expect(attach(nonPuppet).success).toBe(false);
+  expect(attach(host).success).toBe(true);
+  resolve(engine);
+  expect(CardCharacteristicService.resolvePower(engine.roomState, live(engine, host))).toBe(basePower + 2);
+  attackWith(engine, host);
+  expect(engine.roomState.stack.at(-1)?.source.uuid).toBe(host.uuid);
+  resolve(engine);
+  choose(engine, [decision === 'decline' ? 'no' : 'yes']);
+  if (decision === 'recover') choose(engine, [top.uuid]);
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual(decision === 'recover' ? [top.uuid] : []);
+  expect(engine.roomState.players.player1.graveyard.map(card => card.uuid)).toEqual(decision === 'ineligible' ? [top.uuid] : []);
+  expect(engine.roomState.players.player1.deck.some(card => card.uuid === top.uuid)).toBe(decision === 'decline');
+  engine.applyMutations([{ type: 'MOVE_CARD', cardUuid: scythe.uuid, playerId: 'player1', from: 'battlefield', to: 'hand' }]);
+  expect(CardCharacteristicService.resolvePower(engine.roomState, live(engine, host))).toBe(basePower);
+  expect(CardCharacteristicService.resolveAbilities(engine.roomState, live(engine, host))
+    .some(ability => ability.id.includes('ghostfire-scythe-attack'))).toBe(false);
+});
+
+it('Arthur converts actual blocked combat damage to half damage to the opponent', () => {
+  const arthur = card('far-north-dragon-emperor-arthur', 'battlefield');
+  const blocker = creature('arthur-blocker', 'player2', 4, 8);
+  const engine = game(arthur, blocker);
+  attackWith(engine, arthur);
+  expect(engine.passPriority('player1').success).toBe(true);
+  expect(engine.passPriority('player2').success).toBe(true);
+  expect(engine.executePlayerAction('player2', 'declare_blockers', {
+    assignments: [{ attackerUuid: arthur.uuid, blockerUuids: [blocker.uuid] }],
+  }).success).toBe(true);
+  expect(engine.passPriority('player1').success).toBe(true);
+  expect(engine.passPriority('player2').success).toBe(true);
+  answerSingleRecipientCombat(engine);
+  expect(live(engine, blocker).state.damageTaken).toBe(7);
+  expect(live(engine, arthur).state.damageTaken).toBe(4);
+  expect(engine.roomState.players.player2.life).toBe(20);
+  expect(engine.roomState.stack.at(-1)?.ability?.id).toBe('arthur-creature-damage');
+  resolve(engine);
+  expect(engine.roomState.players.player2.life).toBe(17);
+  expect(engine.roomState.stack).toEqual([]);
+});
+
+it.each([
+  ['winter-drake', 'player1', true],
+  ['empire-servant', 'player1', false],
+  ['winter-drake', 'player2', false],
+] as const)('Ice Ridge Lord draws only when a friendly Ice Dragon attacks (%s, %s)', (id, playerId, draws) => {
+  const lord = card('ice-ridge-lord', 'battlefield');
+  const attacker = card(id, 'battlefield', playerId);
+  const engine = game(lord, attacker);
+  const top = engine.roomState.players.player1.deck.at(-1)!;
+  engine.roomState.activeTurnPlayerId = playerId;
+  engine.roomState.phase = 'declareAttackersStep';
+  engine.roomState.priorityPlayerId = null;
+  expect(engine.executePlayerAction(playerId, 'declare_attackers', {
+    attackers: [{ cardUuid: attacker.uuid }],
+  }).success).toBe(true);
+  expect(engine.roomState.stack).toHaveLength(draws ? 1 : 0);
+  if (draws) resolve(engine);
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual(draws ? [top.uuid] : []);
+});
+
+it('Aleya taps for cold without opening the stack or spending charge', () => {
+  const aleya = card('coldnest-lord-aleya', 'battlefield');
+  aleya.state.counters.charge = 4;
+  const engine = game(aleya);
+  expect(engine.executePlayerAction('player1', 'tapForMana', { cardUuid: aleya.uuid, abilityId: 'mana' }).success).toBe(true);
+  expect(engine.roomState.players.player1.mana.white).toBe(6);
+  expect(live(engine, aleya).state).toMatchObject({ isTapped: true, counters: { charge: 4 } });
+  expect(engine.roomState.stack).toEqual([]);
+});
+
+it.each([
+  ['beast-holy-land', 'wind-spirit-regrowth'],
+  ['demon-sea-spire', 'beast-emperor-command'],
+] as const)('Murad deploys %s for free before %s can claim itself', (deployedId, recoveredId) => {
+  const engine = game();
+  const deployed = card(deployedId, 'library');
+  const recovered = card(recoveredId, 'library');
+  const equipment = card('vitality-wood-staff', 'library');
+  const rest = [equipment, card('sea-patrol', 'library'), card('sea-depths', 'library')];
+  const deep = card('beast-holy-land', 'library');
+  engine.roomState.players.player1.deck = [deep, ...rest, deployed, recovered];
+  expect(cast(engine, card('wind-spirit-hornblower-murad', 'hand')).success).toBe(true);
+  resolve(engine);
+  const mana = { ...engine.roomState.players.player1.mana };
+  resolve(engine);
+  const deployment = engine.roomState.pendingChoice;
+  if (deployment?.kind !== 'search') throw new Error('Expected the reveal deployment choice');
+  expect(deployment.options.map(option => option.id)).toEqual([deployed.uuid]);
+  choose(engine, [deployed.uuid]);
+  expect(live(engine, deployed).state.summonKind).toBe('effect');
+  expect(engine.roomState.players.player1.mana).toEqual(mana);
+  expect(engine.roomState.turnHistory?.landPlays?.player1 ?? 0).toBe(0);
+  expect(engine.roomState.stack.some(object => object.source.uuid === recovered.uuid)).toBe(false);
+  expect(engine.roomState.pendingChoice?.kind).toBe('ordering');
+  choose(engine, [recovered.uuid, ...rest.map(card => card.uuid)]);
+  expect(engine.roomState.stack.at(-1)?.source.uuid).toBe(recovered.uuid);
+  resolve(engine);
+  choose(engine, ['yes']);
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual([recovered.uuid]);
+  expect(engine.roomState.players.player1.deck.map(card => card.uuid)).toEqual([...rest].reverse().map(card => card.uuid).concat(deep.uuid));
+});
+
+it('Blade Wolf still deploys its land but cannot reveal if four cards remain in hand', () => {
+  const engine = game();
+  const land = card('beast-holy-land', 'hand');
+  engine.roomState.players.player1.hand = [land, ...Array.from({ length: 4 }, () => card('sea-depths', 'hand'))];
+  const deck = engine.roomState.players.player1.deck.map(card => card.uuid);
+  expect(cast(engine, card('wind-spirit-blade-wolf', 'hand')).success).toBe(true);
+  resolve(engine);
+  resolve(engine);
+  choose(engine, [land.uuid]);
+  expect(live(engine, land)).toBeDefined();
+  expect(engine.roomState.players.player1.hand).toHaveLength(4);
+  expect(engine.roomState.pendingChoice).toBeFalsy();
+  expect(engine.roomState.stack).toEqual([]);
+  expect(engine.roomState.players.player1.deck.map(card => card.uuid)).toEqual(deck);
+});
+
+it('Wind Spirit Beast Wrath taps exactly two opposing creatures on the opponent’s turn', () => {
+  const spell = card('wind-spirit-beast-wrath', 'hand');
+  const enemies = Array.from({ length: 3 }, () => card('sea-patrol', 'battlefield', 'player2'));
+  const ally = card('wind-beast-bean', 'battlefield');
+  const engine = game(ally, ...enemies);
+  engine.roomState.players.player1.hand = [spell];
+  engine.roomState.activeTurnPlayerId = 'player2';
+  const use = (targets: CardInstance[]) => engine.executePlayerAction('player1', 'cast_spell', {
+    cardUuid: spell.uuid, targets: targets.map(card => ({ targetType: 'permanent', cardUuid: card.uuid })),
+  });
+  expect(use([enemies[0], ally]).success).toBe(false);
+  expect(use(enemies.slice(0, 2)).success).toBe(true);
+  resolve(engine);
+  expect(enemies.map(card => live(engine, card).state.isTapped)).toEqual([true, true, false]);
+  expect(live(engine, ally).state.isTapped).toBe(false);
+});
+
+it.each([true, false])('Wind Beast Son counts its printed name and optionally freezes an enemy (%s)', freeze => {
+  const son = card('wind-spirit-beast-son', 'hand');
+  const enemy = card('sea-city-noble', 'battlefield', 'player2');
+  const engine = game(enemy);
+  expect(cast(engine, son).success).toBe(true);
+  resolve(engine);
+  const target = engine.roomState.pendingChoice;
+  if (target?.kind !== 'targets') throw new Error('Expected the opposing creature as a target');
+  choose(engine, [target.options[0].id]);
+  resolve(engine);
+  choose(engine, [freeze ? 'yes' : 'no']);
+  expect(CardCharacteristicService.resolve(engine.roomState, live(engine, son))).toMatchObject({ power: 3, toughness: 4 });
+  expect(live(engine, enemy).state.isTapped).toBe(freeze);
+  if (freeze) {
+    const naturalUntap = { type: 'UNTAP_CARD', cardUuid: enemy.uuid, natural: true } as const;
+    engine.applyMutations([naturalUntap]);
+    expect(live(engine, enemy).state.isTapped).toBe(true);
+    engine.applyMutations([naturalUntap]);
+    expect(live(engine, enemy).state.isTapped).toBe(false);
+  }
+});
+
+it.each(['equipment', 'decline'] as const)('Frost Messenger can keep an Ice Dragon equipment on top or decline the reveal (%s)', decision => {
+  const engine = game();
+  const equipment = card('far-north-crown', 'library');
+  const other = card('sea-patrol', 'library');
+  const top = card('land-red', 'library');
+  engine.roomState.players.player1.deck = [equipment, other, top];
+  expect(cast(engine, card('frost-messenger', 'hand')).success).toBe(true);
+  resolve(engine);
+  resolve(engine);
+  choose(engine, [decision === 'decline' ? 'skip' : 'reveal']);
+  if (decision === 'equipment') {
+    const search = engine.roomState.pendingChoice;
+    if (search?.kind !== 'search') throw new Error('Expected the Ice Dragon selection');
+    expect(search.options.map(option => option.id)).toEqual([equipment.uuid]);
+    choose(engine, [equipment.uuid]);
+    choose(engine, [other.uuid, top.uuid]);
+  }
+  expect(engine.roomState.players.player1.deck.map(card => card.uuid))
+    .toEqual(decision === 'equipment' ? [top.uuid, other.uuid, equipment.uuid] : [equipment.uuid, other.uuid, top.uuid]);
+  const revealed = engine.drainEventBatches().flatMap(batch => batch.events).filter(event => event.eventId === 'CARD_REVEALED');
+  expect(revealed).toHaveLength(decision === 'equipment' ? 3 : 0);
+});
+
+it.each(['deployment', 'reveal'] as const)('Lysandria only takes cards after accepting the optional reveal (declines %s)', step => {
+  const marked = card('ice-ridge-lord', 'battlefield');
+  marked.state.counters.aurora = 1;
+  const guide = card('northern-guide-lysandria', 'hand');
+  const engine = game(marked);
+  engine.roomState.players.player1.deck.push(card('icewind-guardian', 'library'));
+  engine.roomState.players.player1.hand = [guide];
+  const library = engine.roomState.players.player1.deck.map(card => card.uuid);
+  engine.applyMutations([{ type: 'MOVE_CARD', cardUuid: marked.uuid, playerId: 'player1', from: 'battlefield', to: 'exile' }]);
+  resolve(engine);
+  choose(engine, [step === 'deployment' ? 'no' : 'yes']);
+  if (step === 'reveal') {
+    expect(live(engine, guide).state.summonKind).toBe('effect');
+    resolve(engine);
+    choose(engine, ['skip']);
+  }
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual(step === 'deployment' ? [guide.uuid] : []);
+  expect(engine.roomState.players.player1.deck.map(card => card.uuid)).toEqual(library);
+  expect(engine.roomState.stack).toEqual([]);
+  expect(engine.roomState.pendingChoice).toBeFalsy();
+});
+
+it.each([true, false])('Dragon Tomb can be declined and caps a rescued Dragon at its maximum life (%s)', rescue => {
+  const relic = card('dragon-tomb', 'battlefield');
+  const dragon = card('frost-messenger', 'battlefield');
+  const source = card('sea-patrol', 'battlefield', 'player2');
+  const engine = game(relic, dragon, source);
+  const cap = CardCharacteristicService.resolveToughness(engine.roomState, dragon);
+  expect(cap).toBeLessThan(3);
+  engine.applyMutations(planDamage(engine.roomState, [{
+    source: captureSourceInformation(engine.roomState, source),
+    recipient: { kind: 'permanent', cardUuid: dragon.uuid, zoneRevision: 0 },
+    amount: cap + 3, combat: false, preventable: false,
+  }]));
+  const recovery = engine.roomState.pendingChoice;
+  if (recovery?.kind !== 'options') throw new Error('Expected Tomb rescue choice');
+  const option = recovery.options.find(option => option.id.startsWith('skip:') !== rescue);
+  if (!option) throw new Error('Expected one matching rescue answer');
+  choose(engine, [option.id]);
+  const survivor = live(engine, dragon);
+  if (rescue) expect(survivor.state.damageTaken).toBe(0);
+  else expect(survivor).toBeUndefined();
+  expect(live(engine, relic) !== undefined).toBe(!rescue);
+  expect(engine.roomState.players.player1.graveyard.map(card => card.uuid)).toEqual([rescue ? relic.uuid : dragon.uuid]);
+});
+
+it('Holy Energy Haste heals during an opponent turn and rejects the bottom-draw mode there', () => {
+  const engine = game();
+  engine.roomState.activeTurnPlayerId = 'player2';
+  const spell = card('holy-energy-haste', 'hand');
+  engine.roomState.players.player1.hand = [spell];
+  const use = (mode: string) => engine.executePlayerAction('player1', 'cast_spell', { cardUuid: spell.uuid, modes: [mode] });
+  expect(use('bottom-draw').success).toBe(false);
+  expect(use('heal').success).toBe(true);
+  resolve(engine);
+  expect(engine.roomState.players.player1.life).toBe(21);
+  expect(engine.roomState.players.player1.hand).toEqual([]);
+});
+
+it.each(['recover', 'ineligible'] as const)('Phantom Ghostfire mills on attack and filters that exact result (%s)', decision => {
+  const ghostfire = card('phantom-ghostfire', 'battlefield');
+  const engine = game(ghostfire);
+  const recent = card(decision === 'recover' ? 'hera-ghostfire' : 'phantom-puppet', 'library');
+  const older = card('hera-ghostfire', 'graveyard');
+  engine.roomState.players.player1.deck.push(recent);
+  engine.roomState.players.player1.graveyard = [older];
+  attackWith(engine, ghostfire);
+  resolve(engine);
+  choose(engine, ['yes']);
+  if (decision === 'recover') {
+    const choice = engine.roomState.pendingChoice;
+    if (choice?.kind !== 'search') throw new Error('Expected the recent card');
+    expect(choice.options.map(option => option.id)).toEqual([recent.uuid]);
+    choose(engine, [recent.uuid]);
+  }
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual(decision === 'recover' ? [recent.uuid] : []);
+  expect(engine.roomState.players.player1.graveyard.map(card => card.uuid))
+    .toEqual(decision === 'ineligible' ? [older.uuid, recent.uuid] : [older.uuid]);
+  expect(engine.roomState.pendingChoice).toBeFalsy();
+});
+
+it.each([20, 1])('Phantom Dreamer can leave the normal turn draw as the only draw (life: %s)', life => {
+  const dreamer = card('phantom-dreamer', 'battlefield');
+  const engine = game(dreamer);
+  engine.roomState.players.player1.life = life;
+  engine.roomState.phase = 'upkeepStep';
+  engine.roomState.turnNumber = 2;
+  engine.applyMutations(new StateMachine(engine.roomState).transition(engine.roomState, 'stateDrawPhase'));
+  expect(engine.roomState.players.player1.hand).toHaveLength(1);
+  resolve(engine);
+  if (life === 20) choose(engine, ['no']);
+  else expect(engine.roomState.pendingChoice).toBeFalsy();
+  expect(engine.roomState.players.player1.life).toBe(life);
+  expect(engine.roomState.players.player1.hand).toHaveLength(1);
+  expect(engine.roomState.stack).toEqual([]);
+});
+
+it('Galar freezes only his three chosen opponents and refreshes the attack trigger next turn', () => {
+  const galar = card('wind-emperor-leon-galar', 'battlefield');
+  const enemies = Array.from({ length: 4 }, () => card('sea-city-noble', 'battlefield', 'player2'));
+  const engine = game(galar, ...enemies);
+  const clearAttack = () => engine.applyMutations([
+    { type: 'CLEAR_COMBAT' },
+    { type: 'UNTAP_CARD', cardUuid: galar.uuid },
+    { type: 'SET_ATTACKED_THIS_TURN', cardUuid: galar.uuid, value: false },
+  ]);
+  attackWith(engine, galar);
+  const choice = engine.roomState.pendingChoice;
+  if (choice?.kind !== 'targets') throw new Error('Expected three opposing freeze targets');
+  expect([choice.min, choice.max]).toEqual([3, 3]);
+  expect(choice.options).toHaveLength(4);
+  choose(engine, choice.options.slice(0, 3).map(option => option.id));
+  resolve(engine);
+  expect(enemies.filter(enemy => live(engine, enemy).state.isTapped)).toHaveLength(3);
+  expect(enemies.filter(enemy => live(engine, enemy).state.skipNextUntap)).toHaveLength(3);
+
+  // Reopen a test combat in the same turn to isolate the ability's own limit.
+  clearAttack();
+  attackWith(engine, galar);
+  expect(engine.roomState.pendingChoice).toBeFalsy();
+  expect(engine.roomState.stack).toEqual([]);
+  clearAttack();
+  engine.applyMutations([{ type: 'SET_TURN', playerId: 'player1', advance: true }]);
+  attackWith(engine, galar);
+  expect(engine.roomState.pendingChoice?.kind).toBe('targets');
+});
+
+it.each(['redirect', 'duplicate', 'hexproof', 'power', 're-entered'] as const)(
+  'Icewind Guardian respects the original group and target restrictions (%s)', scenario => {
+    const dragon = card('ice-ridge-lord', 'battlefield');
+    const guardian = card('icewind-guardian', 'battlefield');
+    const engine = game(dragon, guardian);
+    const spell = card('empire-servant', 'hand', 'player2');
+    const twoCreatures = scenario === 'duplicate';
+    spell.blueprint = {
+      ...spell.blueprint, cardTypes: ['Spell'],
+      castRequirements: { allowedZones: ['hand'], speed: 'instant', cost: {} },
+      onCastEffects: [
+        {
+          targetGroup: 'creatures', action: 'ADD_COUNTER', params: { counterType: 'scorch', amount: 1 },
+          targeting: {
+            type: 'permanent', cardTypes: ['Creature'], controller: 'opponent', required: true,
+            minTargets: twoCreatures ? 2 : 1, maxTargets: twoCreatures ? 2 : 1,
+            ...(scenario === 'power' ? { power: { max: 2 } } : {}),
+          },
+        },
+        {
+          targetGroup: 'player', action: 'MODIFY_LIFE', params: { amount: -2 },
+          targeting: { type: 'player', controller: 'opponent', required: true, maxTargets: 1 },
+        },
+      ],
+    };
+    if (scenario === 'power') dragon.blueprint = { ...dragon.blueprint, power: 2 };
+    if (scenario === 'hexproof') guardian.blueprint = { ...guardian.blueprint, keywords: ['Hexproof'] };
+    engine.roomState.priorityPlayerId = 'player2';
+    engine.roomState.players.player2.hand = [spell];
+    const creatures = [dragon, ...(twoCreatures ? [guardian] : [])];
+    expect(engine.executePlayerAction('player2', 'cast_spell', {
+      cardUuid: spell.uuid, targetGroups: [
+        { id: 'creatures', targets: creatures.map(value => ({ targetType: 'permanent', cardUuid: value.uuid })) },
+        { id: 'player', targets: [{ targetType: 'player', playerId: 'player1' }] },
+      ],
+    }).success).toBe(true);
+    const originalSpell = engine.roomState.stack[0];
+    expect(engine.roomState.stack.at(-1)).toMatchObject({ type: 'triggered', source: { uuid: guardian.uuid } });
+    if (scenario === 're-entered') {
+      engine.applyMutations([
+        { type: 'MOVE_CARD', cardUuid: guardian.uuid, playerId: 'player1', from: 'battlefield', to: 'exile' },
+        { type: 'MOVE_CARD', cardUuid: guardian.uuid, playerId: 'player1', from: 'exile', to: 'battlefield' },
+      ]);
+      expect(live(engine, guardian).state.zoneRevision).not.toBe(guardian.state.zoneRevision);
+      const entry = engine.roomState.stack.at(-1);
+      if (entry?.type === 'triggered' && entry.ability?.id === 'entry-aurora') resolve(engine);
+    }
+    resolve(engine);
+    if (engine.roomState.pendingChoice) choose(engine, ['yes']);
+    const pending = engine.roomState.stack[0];
+    const redirected = scenario === 'redirect';
+    expect(pending.targetGroups?.[0].targets.map(target => target.cardUuid))
+      .toEqual(redirected ? [guardian.uuid] : creatures.map(value => value.uuid));
+    expect(pending.targetGroups?.[1]).toEqual(originalSpell.targetGroups?.[1]);
+    expect(pending.effects[1]).toEqual(originalSpell.effects[1]);
+    resolve(engine);
+    expect(engine.roomState.players.player1.life).toBe(18);
+    expect(live(engine, dragon).state.counters.scorch ?? 0).toBe(redirected ? 0 : 1);
+    expect(live(engine, guardian).state.counters.scorch ?? 0).toBe(redirected || twoCreatures ? 1 : 0);
+  },
+);

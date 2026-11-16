@@ -134,3 +134,14 @@ describe('starter hand and artifact consumers', () => {
     expect(engine.roomState.battlefield.some(card => card.uuid === target.uuid)).toBe(true);
   });
 });
+
+it('a battlefield Wise Wolf makes another friendly creature summon immediate', () => {
+  const engine = fixture();
+  effectSummon(engine, 'wise-ignition-wolf', 'player1');
+  const servant = hand(engine, 'empire-servant');
+  engine.drainEventBatches();
+  expect(engine.executePlayerAction('player1', 'cast_spell', { cardUuid: servant.uuid }).success).toBe(true);
+  expect(engine.roomState.stack).toEqual([]);
+  expect(engine.roomState.battlefield.find(card => card.uuid === servant.uuid)?.state.summonKind).toBe('cast');
+  expect(engine.drainEventBatches().flatMap(batch => batch.events).some(event => event.eventId === 'STACK_UPDATED')).toBe(false);
+});

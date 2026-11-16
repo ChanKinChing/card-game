@@ -180,7 +180,11 @@ describe('workbook cards consuming existing mechanics', () => {
     engine.roomState.battlefield = [source, recipient]; attack(engine, source); select(engine, recipient.uuid); engine.resolveTopOfStack();
     const live = engine.roomState.battlefield.find(c => c.uuid === recipient.uuid)!;
     if (id === 'wind-beast-fox') expect(live.state.isTapped).toBe(true);
-    else expect(characteristics.resolvePower(engine.roomState, live)).toBe(recipient.blueprint.power! + 1);
+    else {
+      expect(characteristics.resolvePower(engine.roomState, live)).toBe(recipient.blueprint.power! + 1);
+      engine.applyMutations([{ type: 'CLEAR_END_OF_TURN_EFFECTS' }]);
+      expect(characteristics.resolvePower(engine.roomState, live)).toBe(recipient.blueprint.power);
+    }
   });
 
   it('casts 初級風疲術 for generic energy and taps the selected opposing creature', () => {
@@ -205,13 +209,18 @@ describe('workbook cards consuming existing mechanics', () => {
 
   it('keeps 歐凱爾之墓’s printed activation free and repeatable', () => {
     const { engine, source } = game('okair-tomb'); source.state.zone = 'battlefield';
-    const beast = card('wind-beast-fox'); engine.roomState.players.player1.hand = []; engine.roomState.battlefield = [source, beast];
+    const beast = card('wind-beast-fox');
+    const enemy = card('wind-beast-fox', 'battlefield', 'player2');
+    engine.roomState.players.player1.hand = []; engine.roomState.battlefield = [source, beast, enemy];
     for (let i = 0; i < 2; i++) {
       expect(engine.executePlayerAction('player1', 'activate_ability', { cardUuid: source.uuid, abilityId: 'empower-beasts' }).success).toBe(true);
       engine.resolveTopOfStack();
     }
-    expect(characteristics.resolvePower(engine.roomState, engine.roomState.battlefield[1])).toBe(7);
+    expect(characteristics.resolvePower(engine.roomState, beast)).toBe(7);
+    expect(characteristics.resolvePower(engine.roomState, enemy)).toBe(3);
     expect(engine.roomState.battlefield[0].state.isTapped).toBe(false);
+    engine.applyMutations([{ type: 'CLEAR_END_OF_TURN_EFFECTS' }]);
+    expect(characteristics.resolvePower(engine.roomState, beast)).toBe(3);
   });
 
   it('uses 諸界游歷者’s ordinary tap-to-draw activation on the stack', () => {

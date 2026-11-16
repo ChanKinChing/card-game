@@ -268,13 +268,20 @@ describe('optional resolution-time payment', () => {
     engine.roomState.battlefield.push(card('second', 2));
     activate(engine, source);
     engine.resolveTopOfStack();
+    const offer = engine.roomState.pendingChoice!;
+    expect(engine.inspectPlayerAction('player1', 'choose', { choiceId: offer.id, choices: ['yes'] }))
+      .toMatchObject({ kind: 'input', choice: { kind: 'distribution', total: 3 } });
+    expect(engine.roomState.pendingChoice).toBe(offer);
     choose(engine, ['yes']);
     expect(count(engine)).toBe(5);
     expect(engine.roomState.players.player1.life).toBe(20);
     const restored = new GameEngine(JSON.parse(JSON.stringify(engine.roomState)));
     engines.push(restored);
     restored.initRoom();
-    expect(allocate(restored, { 'counter-source:0': 1, 'second:0': 2 }).success).toBe(true);
+    const allocations = { 'counter-source:0': 1, 'second:0': 2 };
+    expect(restored.inspectPlayerAction('player1', 'choose', { choiceId: restored.roomState.pendingChoice!.id, allocations }))
+      .toEqual({ kind: 'ready' });
+    expect(allocate(restored, allocations).success).toBe(true);
     expect(count(restored)).toBe(4);
     expect(count(restored, 'second')).toBe(0);
     expect(restored.roomState.players.player1.life).toBe(21);

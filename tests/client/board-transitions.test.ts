@@ -12,14 +12,19 @@ describe('board cues from player views', () => {
       { source: attacker, target: blocker, combat: true },
       { source: blocker, target: attacker, combat: true },
       { source: { kind: 'stack', stackUuid: 'fireball' }, target: player, combat: false, color: 'red' },
+      { target: player, combat: false },
     ])).toEqual([
       { from: 'battlefield:a:1', at: 'battlefield:b:3', style: 'combat' },
       { from: stackAnchor('fireball'), at: seatAnchor('life', 'player2'), style: 'red' },
+      { from: undefined, at: seatAnchor('life', 'player2'), style: 'neutral' },
     ]);
   });
   it('matches a visible card across hand, stack, and graveyard using its instance ID', () => {
     const before = createTestRoom();
     const card = before.players.player1.hand[0];
+    // A cached hand can predate zone revisions. Its visible anchor still follows the card.
+    delete card.state.zoneRevision;
+    expect(cardAnchor('hand', card)).toBe('hand:' + card.uuid + ':0');
     const cast = structuredClone(before);
     cast.players.player1.hand.shift();
     cast.stack = [{
@@ -76,6 +81,9 @@ describe('board cues from player views', () => {
     const token = { ...fixture, uuid: 'token', isToken: true, state: { ...fixture.state, zone: 'battlefield' as const, zoneRevision: 3 } };
     const after = { ...before, battlefield: [token] };
     expect(deriveBoardCues(before, after)).toEqual([{ kind: 'token-appear', at: 'battlefield:token:3' }]);
-    expect(deriveBoardCues(after, before)).toEqual([{ kind: 'token-cease', at: 'battlefield:token:3' }]);
+    const departed = { ...before, players: { ...before.players, player1: { ...before.players.player1,
+      graveyard: [{ ...token, state: { ...token.state, zone: 'graveyard' as const } }],
+    } } };
+    expect(deriveBoardCues(after, departed)).toEqual([{ kind: 'token-cease', at: 'battlefield:token:3' }]);
   });
 });

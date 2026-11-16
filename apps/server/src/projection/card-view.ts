@@ -28,6 +28,13 @@ export function buildCardView(room: GameRoom, viewerId: string, card: CardInstan
   const canAttack = canParticipate && !state.attackedThisTurn &&
     effectiveActionPermission(effective, viewerId, 'attack').allowed &&
     (!state.summoningSickness || CombatRuleRegistry.canAttackWhileSummoningSick({ room, playerId: viewerId, attackers: [card] }, card));
+  const actions = interactive && (state.zone === 'hand' || onBoard)
+    ? projectActionOptions(options.getOptions(room, viewerId, card.uuid, state.zone === 'hand' ? 'hand' : 'battlefield'), room.roomId, viewerId)
+    : [];
+  const defaultAction = state.zone === 'hand' ? actions.find(option =>
+    option.actionId === 'play_land' || option.actionId === 'cast_spell') : undefined;
+  const targetKeys = new Set(actions.filter(action => action.nextInput === 'targets').map(action =>
+    action.actionId === 'activate_ability' ? action.actionId + ':' + action.data?.abilityId : action.actionId));
   return {
     uuid: card.uuid, definitionId: card.blueprint.id, name: effective.name,
     label: onBoard ? battlefieldCardLabel(room, card) : effective.name,
@@ -46,9 +53,9 @@ export function buildCardView(room: GameRoom, viewerId: string, card: CardInstan
       ...(state.attachedToPlayerId ? { attachedToPlayerId: state.attachedToPlayerId } : {}),
       ...(state.protectorId && isPublicPermanent(room, state.protectorId) ? { protectorId: state.protectorId } : {}),
     },
-    ...(interactive && state.zone === 'hand' && room.status === 'playing' ? { defaultActionId: effective.cardTypes.includes('Land') ? 'play_land' : 'cast_spell' } : {}),
-    actions: interactive && (state.zone === 'hand' || onBoard) ? projectActionOptions(options.getOptions(room, viewerId, card.uuid, state.zone === 'hand' ? 'hand' : 'battlefield'), room.roomId, viewerId) : [],
-    targetGroups: interactive ? buildTargetGroups(room, viewerId, card) : {},
+    ...(defaultAction ? { defaultActionId: defaultAction.actionId } : {}),
+    actions,
+    targetGroups: targetKeys.size ? buildTargetGroups(room, viewerId, card, targetKeys) : {},
     canAttack, canBlock: canParticipate && effectiveActionPermission(effective, viewerId, 'block').allowed,
   };
 }

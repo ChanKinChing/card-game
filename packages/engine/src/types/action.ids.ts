@@ -53,3 +53,8 @@ export const ACTION_ID_LABELS: Record<ActionId, string> = {
   [ACTION_IDS.passPriority]: 'Pass priority',
   [ACTION_IDS.resolveStack]: 'Resolve stack',
 };
+
+/** Candidates for a combat declaration; the engine validates the complete assignment. */
+export type CombatDeclarationInput =
+  | { actionId: 'declare_attackers'; attackerUuids: string[] }
+  | { actionId: 'declare_blockers'; attackerUuids: string[]; blockerUuids: string[] };

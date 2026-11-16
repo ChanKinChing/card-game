@@ -17,10 +17,10 @@ import { declarationPlayer } from '../shared/turn-utils';
 import { TURN_SEQUENCE, type Phase } from '../types/game.state.types';
 import { gameConfig } from '../config';
 import { buildStartingCardMutations } from './room-factory';
-import { playerCommands, validateActionData } from './player-commands';
+import { commandFor, concedeOpponent, inspectPlayerAction, playerCommandError, preparePlayerAction } from './player-action-query';
 import type { AppliedEventBatch, BatchCause, CommandContext, ResolutionReport } from '../types/game-event.types';
 import { engineLogger } from '../shared/game-logger';
-import { prepareActionChoice, applyActionChoice } from './action-choices';
+import { applyActionChoice } from './action-choices';
 import type { PendingChoice, ActionContinuation, ChoiceAnswer } from '../types/choice.types';
 import { planTriggerScheduling } from './trigger-scheduler';
 import { startCombatDamage, type CombatPlan } from './combat-service';
@@ -57,12 +57,14 @@ export class GameEngine {
     room: GameRoom,
     dependencies: Partial<RuntimeContext> = {},
     private readonly actionRegistry = createDefaultActionRegistry(),
+    lastBatchId?: string,
   ) {
     this.runtimeContext = resolveRuntimeContext(dependencies);
     this.effectContext = { ...defaultEffectContext, random: this.runtimeContext.random, uuid: this.runtimeContext.uuid };
     this.mutationCollector.push(...room.pendingTriggers ?? []);
     this.eventBus = new EventBus(room.roomId);
     this.commits = new MutationCommitter(room, this.eventBus, this.mutationCollector, () => this.generateUuid(), () => this.commandContext);
+    this.commits.lastBatchId = lastBatchId;
     this.stateMachine = new StateMachine(room);
     this.actionService = new ActionService(this.eventBus, this.mutationCollector, () => this.generateUuid(), this.effectContext, this.actionRegistry);
   }
@@ -195,6 +197,11 @@ export class GameEngine {
     return this.processingRules || this.mutationCollector.length > 0 || !!this.room.pendingChoice || !!this.room.triggerQueue;
   }
 
+  /** Parent of the next rules batch. Retained at a recovery checkpoint. */
+  get lastBatchId(): string | undefined {
+    return this.commits.lastBatchId;
+  }
+
   /** Consume committed batches after an operation; runtime room refs are not serialized. */
   drainEventBatches(): AppliedEventBatch[] {
     return this.commits.drainEventBatches();
@@ -252,19 +259,8 @@ export class GameEngine {
   private executeCommand(playerId: PlayerId, actionId: string, data: unknown): ActionResult {
     const reject = (reason: string): ActionResult => ({ success: false, phase: 'validate', reason });
 
-    // Guard: a finished game accepts no commands.
-    if (this.isGameOver) return reject('Game is over');
-
-    // Guard: the sender must be one of the two seated players.
-    if ((playerId !== this.room.player1Id && playerId !== this.room.player2Id) ||
-        !Object.prototype.hasOwnProperty.call(this.room.players, playerId) || !this.room.players[playerId]) return reject('Player is not in this room');
-
-    // Guard: the action id must be a nonempty string.
-    if (typeof actionId !== 'string' || !actionId.trim()) return reject('actionId must be a nonempty string');
-
-    const shapeError = validateActionData(data);
-
-    if (shapeError) return reject(shapeError);
+    const error = playerCommandError(this.room, playerId, actionId, data);
+    if (error) return reject(error);
 
     // Stack identity belongs to the engine. Keep fixture injection on the
     // lower-level methods, while retaining all other addon payload fields.
@@ -272,8 +268,8 @@ export class GameEngine {
 
     // Concession is a match-level decision and never requires priority or a choice answer.
     if (actionId === 'concede') {
-      const opponent = playerId === this.room.player1Id ? this.room.player2Id : this.room.player1Id;
-      if (!opponent || this.room.status !== 'playing') return reject('No active opponent to concede to');
+      const opponent = concedeOpponent(this.room, playerId);
+      if (!opponent) return reject('No active opponent to concede to');
       const outcome = { type: 'win' as const, winnerId: opponent,
         losses: [{ playerId, reason: 'concede' as const }] };
       return { success: true, mutations: this.applyMutations([{ type: 'END_GAME', outcome }]) };
@@ -304,48 +300,19 @@ export class GameEngine {
     // Guard: rules work must settle before a new command is accepted.
     if (this.hasPendingRulesWork) return reject('Rules checkpoint is pending');
 
-    const timingError = this.readyCommandError(this.room, actionId, actionData);
-
-    if (timingError) return reject(timingError);
-
-    const command = Object.prototype.hasOwnProperty.call(playerCommands, actionId) ? playerCommands[actionId] : undefined;
-    const preparation = prepareActionChoice(this.room, playerId, actionId, actionData);
-
+    const preparation = preparePlayerAction(this.room, playerId, actionId, actionData, this.actionRegistry);
     if (preparation.kind === 'reject') return reject(preparation.error);
 
     // A prompt opens a choice instead of executing the command.
     if (preparation.kind === 'prompt') return { success: true, mutations: this.applyMutations([{ type: 'SET_PENDING_CHOICE', choice: this.identifyChoice(preparation.choice) }]) };
 
+    const command = commandFor(actionId);
     return command ? command.execute(this, playerId, actionData) : this.proposeAndStack(playerId, actionId, actionData);
   }
 
-  /** Rechecked on action-choice completion against the current room. */
-  private readyCommandError(room: GameRoom, actionId: string, data: ActionData): string | undefined {
-    const declaration = declarationPlayer(room);
-
-    // Guard: a pending combat declaration blocks every other action.
-    if (declaration && !room.stack.length && actionId !== 'declare_attackers' && actionId !== 'declare_blockers' && actionId !== 'end_turn') return 'Combat declaration is required';
-
-    const command = Object.prototype.hasOwnProperty.call(playerCommands, actionId) ? playerCommands[actionId] : undefined;
-
-    // Guard: the action must have a handler somewhere.
-    if (!command && !this.actionRegistry.has(actionId)) {
-      return `No handler registered for action: ${actionId}`;
-    }
-
-    const status = command?.status ?? 'playing';
-
-    if (room.status !== status) return `Action requires ${status} status`;
-
-    if (room.engineState !== 'waiting_for_player') return 'Engine is not ready for player input';
-
-    const mode = room.debugMode ?? gameConfig.debugMode;
-
-    if (command?.debug && mode !== 'flow' && mode !== command.debug) return 'Debug command is disabled in this mode';
-
-    const commandError = command?.validate(data);
-
-    return commandError;
+  /** Read the current command window without creating choices or committing game state. */
+  inspectPlayerAction(playerId: PlayerId, actionId: string, data: unknown = {}) {
+    return inspectPlayerAction(this.room, playerId, actionId, data, this.actionRegistry, this.hasPendingRulesWork);
   }
 
   private identifyChoice(choice: PendingChoice): PendingChoice {
@@ -356,11 +323,7 @@ export class GameEngine {
     const reject = (reason: string): ActionResult => ({ success: false, phase: 'validate', reason });
     const actionData = applyActionChoice(continuation, answer);
     const room = { ...this.room, pendingChoice: null };
-    const timingError = this.readyCommandError(room, continuation.actionId, actionData);
-
-    if (timingError) return reject(timingError);
-
-    const preparation = prepareActionChoice(room, playerId, continuation.actionId, actionData, true);
+    const preparation = preparePlayerAction(room, playerId, continuation.actionId, actionData, this.actionRegistry, true);
 
     if (preparation.kind === 'reject') return reject(preparation.error);
 

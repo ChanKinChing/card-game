@@ -18,6 +18,7 @@ import { recordAbilityCommit } from './ability-usage';
 import { abilityLimitReached, abilityUseKey } from './turn-history';
 import { materializeAnnouncementCost } from './announcement-values';
 import { actionCostError } from './cost-composition';
+import { planProposedMutations, UnpaidMaterialCost } from './proposed-events';
 export { actionCostError } from './cost-composition';
 
 type CostPlan = { success: true; mutations: GameMutation[] } | { success: false; reason: string };
@@ -72,10 +73,12 @@ export function planActionCosts(
     return payment;
   }
 
-  return {
-    success: true,
-    mutations: [...mutations, ...payment.mutations],
-  };
+  mutations.push(...payment.mutations);
+  if (mutations.some(mutation => 'requiredPayment' in mutation && mutation.requiredPayment) &&
+      planProposedMutations(room, mutations).paymentFailed) {
+    return reject(new UnpaidMaterialCost().message);
+  }
+  return { success: true, mutations };
 }
 
 function planDirectCost(

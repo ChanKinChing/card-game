@@ -29,8 +29,9 @@ function button(element: ReactElement<any>, label: string): ReactElement<any> | 
 describe('ordinary combat controls', () => {
   beforeEach(() => { vi.clearAllMocks(); useGameStore.setState({ lastSeq: 0, room: createTestRoom({ phase: 'declareAttackersStep', priorityPlayerId: null, combatDeclarations: { attackers: false, blockers: false } }), roomId: 'room', myPlayerId: 'player1', targeting: null,
     combatSelection: { attackers: [], blockerPairs: [], pendingBlocker: null }, combatNotification: null, error: null, log: [] }); });
-  it('selects a sick candidate, preserves its rejected draft and lets the player repair it', () => {
-    const room = useGameStore.getState().room!, card = creature('candidate', 'player1'); card.state.summoningSickness = true; room.battlefield = [card];
+  it('keeps a submitted attacker draft editable after a declaration is rejected', () => {
+    const room = useGameStore.getState().room!, card = creature('candidate', 'player1'); room.battlefield = [card];
+    room.legalActions = { actions: ['concede'], combat: { actionId: 'declare_attackers', attackerUuids: [card.uuid] } };
     capture(() => CardComponent({ card, zone: 'battlefield' })).props.onClick({});
     expect(useGameStore.getState().combatSelection.attackers).toEqual([card.uuid]);
     button(capture(PhaseBar), 'Confirm Attackers')!.props.onClick();
@@ -43,6 +44,7 @@ describe('ordinary combat controls', () => {
   it('retains a blocker draft after sending, supports clear, and clears on acceptance', () => {
     const room = useGameStore.getState().room!, attacker = creature('attacker', 'player1'), blocker = creature('blocker', 'player2');
     room.phase = 'declareBlockersStep'; room.declarationPlayerId = 'player2'; room.combatDeclarations = { attackers: true, blockers: false }; room.battlefield = [attacker, blocker]; room.combat = [{ uuid: attacker.uuid, attacker, attackerPower: 1, blockers: [] }];
+    room.legalActions = { actions: ['concede'], combat: { actionId: 'declare_blockers', attackerUuids: [attacker.uuid], blockerUuids: [blocker.uuid] } };
     useGameStore.setState({ myPlayerId: 'player2', combatSelection: { attackers: [], blockerPairs: [{ attackerUuid: attacker.uuid, blockerUuid: blocker.uuid }], pendingBlocker: null } });
     button(capture(PhaseBar), 'Confirm Blockers')!.props.onClick();
     expect(useGameStore.getState().combatSelection.blockerPairs).toHaveLength(1);
@@ -67,7 +69,9 @@ describe('ordinary combat controls', () => {
   it('keeps a rejected duplicate-blocker draft editable and repairs the extra pair', () => {
     const room = useGameStore.getState().room!, a = creature('a', 'player1'), c = creature('c', 'player1'), b = creature('b', 'player2');
     room.battlefield = [a, c, b]; room.phase = 'declareBlockersStep'; room.declarationPlayerId = 'player2'; room.combatDeclarations = { attackers: true, blockers: false };
-    room.combat = [a, c].map(attacker => ({ uuid: attacker.uuid, attacker, attackerPower: 1, blockers: [] })); useGameStore.setState({ myPlayerId: 'player2' });
+    room.combat = [a, c].map(attacker => ({ uuid: attacker.uuid, attacker, attackerPower: 1, blockers: [] }));
+    room.legalActions = { actions: ['concede'], combat: { actionId: 'declare_blockers', attackerUuids: [a.uuid, c.uuid], blockerUuids: [b.uuid] } };
+    useGameStore.setState({ myPlayerId: 'player2' });
     for (const attacker of [a, c]) { useGameStore.getState().selectBlocker(b.uuid); useGameStore.getState().assignBlocker(attacker.uuid); }
     button(capture(PhaseBar), 'Confirm Blockers')!.props.onClick(); useGameStore.getState().setError('Blocker b is already assigned to another attacker');
     expect(useGameStore.getState().combatSelection.blockerPairs).toHaveLength(2);

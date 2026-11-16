@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { gameReducer } from '@engine/game-reducer';
+import { projectDamageImpact } from '@server/projection/damage-impacts';
 import { buildPlayerView } from '@server/projection/view-builder';
 import { SyncService, type StateDelta } from '@server/rooms/sync-service';
 import { createTestRoom } from '../helpers/test-room-factory';
@@ -394,6 +395,40 @@ describe('SyncService', () => {
       expect(damageChanges[0].path).toBe('battlefield[0].state.damageTaken');
       expect(damageChanges[0].value).toBe(0);
       expect(damageChanges[0].oldValue).toBe(1);
+    });
+  });
+});
+
+
+describe('damage impact projection', () => {
+  const hit = {
+    eventId: 'DAMAGE_DEALT' as const, roomId: 'impact', eventUuid: 'event', batchId: 'batch',
+    payload: { amount: 2, combat: false, recipient: { cardUuid: 'target' } },
+  };
+  const target = creature('target', 'player2');
+  const before = createTestRoom({ roomId: 'impact', battlefield: [target] });
+
+  it('plays a lethal hit at the old target and skips a new incarnation of the same card', () => {
+    const after = { ...before, battlefield: [] };
+    expect(projectDamageImpact(hit, before, after, 'player1')).toEqual({
+      target: { kind: 'permanent', cardUuid: target.uuid, zoneRevision: 0 }, combat: false,
+    });
+    const reentered = { ...target, state: { ...target.state, zoneRevision: 2 } };
+    expect(projectDamageImpact(hit, before, { ...after, battlefield: [reentered] }, 'player1')).toBeUndefined();
+  });
+
+  it('ignores prevented damage and effects on objects absent from both frames', () => {
+    expect(projectDamageImpact({ ...hit, payload: { ...hit.payload, amount: 0 } }, before, before, 'player1')).toBeUndefined();
+    expect(projectDamageImpact(hit, undefined, { ...before, battlefield: [] }, 'player1')).toBeUndefined();
+  });
+
+  it('projects a live source and color from a current-only frame', () => {
+    const source = creature('fire', 'player1');
+    source.blueprint = { ...source.blueprint, colors: ['red'] };
+    const event = { ...hit, payload: { ...hit.payload, card: source, recipient: { playerId: 'player2' } } };
+    expect(projectDamageImpact(event, undefined, { ...before, battlefield: [source, target] }, 'player1')).toEqual({
+      source: { kind: 'permanent', cardUuid: source.uuid, zoneRevision: 0 },
+      target: { kind: 'player', playerId: 'player2' }, combat: false, color: 'red',
     });
   });
 });

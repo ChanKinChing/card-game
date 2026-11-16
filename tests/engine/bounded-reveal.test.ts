@@ -165,3 +165,20 @@ it('declining optional Emperor reveal produces no reveal event or bottom choice'
   expect(engine.roomState.pendingChoice).toBeFalsy();
   expect(engine.drainEventBatches().flatMap(b => b.events).filter(e => e.eventId === 'CARD_REVEALED')).toHaveLength(0);
 });
+
+it.each([true, false])('赤狼 may take one eligible printed 炎獸 or return all cards (takes card: %s)', take => {
+  const deep = card('musketeer-infantry');
+  const land = card('land-red');
+  const wolf = card('red-wolf');
+  const eligible = card('empire-servant');
+  const engine = start([deep, land, wolf, eligible]);
+  const pick = engine.roomState.pendingChoice;
+  if (pick?.kind !== 'search') throw new Error('Expected revealed card search');
+  expect(pick.options.map(option => option.id)).toEqual([eligible.uuid]);
+  expect([pick.min, pick.max]).toEqual([0, 1]);
+  choose(engine, take ? [eligible.uuid] : []);
+  const returned = take ? [wolf.uuid, land.uuid] : [eligible.uuid, wolf.uuid, land.uuid];
+  choose(engine, returned);
+  expect(engine.roomState.players.player1.hand.map(card => card.uuid)).toEqual(take ? [eligible.uuid] : []);
+  expect(engine.roomState.players.player1.deck.map(card => card.uuid)).toEqual([...returned.reverse(), deep.uuid]);
+});
