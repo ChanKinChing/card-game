@@ -8,7 +8,7 @@ import GameLog from '@client/components/GameLog';
 import CardComponent from '@client/components/CardComponent';
 import CardObservations from '@client/components/CardObservations';
 import StartScreen from '@client/components/StartScreen';
-import { CardSurface } from '@card-game/ui';
+import { CardSurface, Toast, cardArt } from '@card-game/ui';
 import { useGameStore } from '@client/store/gameStore';
 import { useGameActions } from '@client/hooks/useGameActions';
 import socket from '@client/socket';
@@ -47,9 +47,12 @@ describe('action feedback and tracing', () => {
   it('uses the identical shared face in hand while retaining battlefield labels and state classes', () => {
     const room = createTestRoom(), card = room.players.player1.hand[0];
     useGameStore.setState({ room });
-    const surface = renderToStaticMarkup(createElement(CardSurface, { card }));
+    /* The hand card passes the catalogue artwork, so the reference face has to pass the
+       same art or the comparison would only prove that both render a card. */
+    const surface = renderToStaticMarkup(createElement(CardSurface, { card, art: cardArt(card.definitionId) }));
     const hand = renderToStaticMarkup(createElement(CardComponent, { card, zone: 'hand' }));
     expect(hand.replace(/class="card +"/, 'class="card"')).toBe(surface);
+    expect(hand).toContain('card-text-art');
     const battle = { ...card, label: 'Effective <label>', state: { ...card.state, isTapped: true, summoningSickness: true } };
     const html = renderToStaticMarkup(createElement(CardComponent, { card: battle, zone: 'battlefield' }));
     expect(html).toContain('Effective &lt;label&gt;'); expect(html).toContain('tapped'); expect(html).toContain('summoning-sick');
@@ -62,16 +65,18 @@ describe('action feedback and tracing', () => {
       expect(html).toMatch(/<button disabled="">Create New Room<\/button>/);
     } finally { vi.unstubAllGlobals(); }
   });
-  it.each([null, 'room'])('shows a dismissible rejection on screen %s without changing room data', roomId => {
+  it.each([null, 'room'])('shows a self-dismissing rejection on screen %s without changing room data', roomId => {
     useGameStore.setState({ roomId, error: 'Not your priority!' });
     const before = useGameStore.getState().room;
     let tree!: ReactElement<{ children: ReactElement[] }>;
     const Harness = () => { tree = App() as ReactElement<{ children: ReactElement[] }>; return tree; };
     const html = renderToStaticMarkup(createElement(Harness));
-    expect(html).toContain('role="alert"'); expect(html).toContain('Not your priority!'); expect(html).toContain('Dismiss');
-    const alert = tree.props.children.find(child => child?.props?.role === 'alert')!;
-    const button = alert.props.children.find((child: ReactElement) => child?.type === 'button');
-    button.props.onClick(); expect(useGameStore.getState().error).toBeNull(); expect(useGameStore.getState().room).toBe(before);
+    expect(html).toContain('role="alert"'); expect(html).toContain('Not your priority!');
+    /* The toast carries no close button on purpose: it counts itself down and calls
+       onDismiss once the fade finished, so nothing has to be clicked mid-turn. */
+    expect(html).not.toContain('Dismiss');
+    const toast = tree.props.children.find(child => child?.type === Toast)!;
+    toast.props.onDismiss(); expect(useGameStore.getState().error).toBeNull(); expect(useGameStore.getState().room).toBe(before);
   });
   it('sends and logs one generated command ID through the existing hook', () => {
     useGameStore.setState({ roomId: 'room' });

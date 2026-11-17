@@ -124,7 +124,11 @@ describe('battlefield board', () => {
     const html = renderBattlefield([token('t1'), token('t2'), token('t3')]);
     expect(html.match(/permanent-slot/g)).toHaveLength(1);
     expect(html).toContain('×3');
-    expect(html).toContain('card-token');
+    /* Tokens are marked by the printed face's own status line, not by a board class:
+       the wide layout groups permanents into bands and rows instead. */
+    expect(html).toContain('permanent-band permanent-band-creature');
+    expect(html).toContain('permanent-row permanent-row-normal');
+    expect(html).toContain('>Token<');
     expect(html).toContain('data-board-token-members="battlefield:t2:0 battlefield:t3:0"');
     expect(html).toContain('3 identical permanents, expand');
   });

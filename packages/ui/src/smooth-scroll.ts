@@ -36,8 +36,7 @@ function prefersReducedMotion(): boolean {
 }
 
 /** Nearest ancestor (or the target itself) that can scroll in either axis. */
-function nearestScrollable(target: EventTarget | null): Element | null {
-  let node = target instanceof Element ? target : null;
+function nearestScrollable(node: Element | null): Element | null {
   while (node && node !== document.body && node !== document.documentElement) {
     const style = getComputedStyle(node);
     const scrollsY = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;

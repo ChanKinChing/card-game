@@ -59,7 +59,9 @@ describe('pending choice controls', () => {
     card.manaCost = '{X}';
     useGameStore.setState({ room, myPlayerId: 'player1' });
     const html = renderToStaticMarkup(createElement(CardComponent, { card, zone: 'hand' }));
-    expect(html).toContain('{X}'); expect(html).not.toContain('[object Object]');
+    /* `X` is not a colour rune, so it prints as a generic icon rather than raw braces. */
+    expect(html).toContain('<span class="mana-icon" data-color="generic">X</span>');
+    expect(html).not.toContain('[object Object]');
   });
   it('renders an announced number, keeps blank distinct from zero and submits a scalar', () => {
     const numeric = { id: 'number-request', playerId: 'player1', kind: 'number' as const, prompt: 'Choose X', range: { min: 0, max: 5 },

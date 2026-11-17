@@ -16,6 +16,20 @@ const actions = vi.hoisted(() => ({ playerAction: vi.fn(), getOptions: vi.fn() }
 vi.mock('@client/hooks/useGameActions', () => ({ useGameActions: () => actions }));
 vi.mock('@client/socket', () => ({ default: { emit: vi.fn(), on: vi.fn(), off: vi.fn() } }));
 vi.mock('zustand/react/shallow', () => ({ useShallow: (selector: unknown) => selector }));
+/* The menu is invoked as a plain function so the test can reach its button callbacks
+   without a DOM. That skips React's render, so the three hooks it uses are stubbed: a
+   detached ref (the menu is never measured here), a layout effect that is recorded but
+   not run, and state that keeps its initial value. */
+vi.mock('react', async importOriginal => {
+  const actual = await importOriginal<typeof import('react')>();
+  const mock = {
+    ...actual,
+    useRef: (initial: unknown) => ({ current: initial }),
+    useState: (initial: unknown) => [initial, () => undefined],
+    useLayoutEffect: () => undefined,
+  };
+  return { ...mock, default: mock };
+});
 vi.mock('@client/store/gameStore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@client/store/gameStore')>();
   return { ...actual, useGameStore: Object.assign(
@@ -60,7 +74,12 @@ describe('mana client options', () => {
     const card = useGameStore.getState().room!.players.player1.hand[0];
     card.manaCost = '{2}{R}{Y}';
     const html = renderToStaticMarkup(createElement(CardComponent, { card, zone: 'hand' }));
-    expect(html).toContain('{2}{R}{Y}');
+    /* The cost is a row of runes, not the raw `{2}{R}{Y}` text: the generic number and
+       the two colour runes each get their own icon, and only the runes are coloured. */
+    expect(html).toContain('<span class="mana-icon" data-color="generic">2</span>');
+    expect(html).toContain('<span class="mana-icon" data-color="R">R</span>');
+    expect(html).toContain('<span class="mana-icon" data-color="Y">Y</span>');
+    expect(html).not.toContain('{2}{R}{Y}');
   });
   it('forwards the chosen Hellkite ability through the real menu callback', () => {
     useGameStore.setState({ contextMenu: { x: 0, y: 0, cardUuid: 'hellkite', zone: 'battlefield', options: [
