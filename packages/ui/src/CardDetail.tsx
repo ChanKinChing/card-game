@@ -1,6 +1,8 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { CardSurface } from './CardSurface';
 import { reduce, type TransitionTable } from './machine';
+import { useT } from './i18n/context';
+import { cardTypeLine, colorLine } from './i18n/vocabulary';
 
 /**
  * Everything the inspector can print. The catalogue can fill every field; a card on
@@ -69,6 +71,7 @@ const FALLBACK_MS = 320;
  * of the element it came from and shrinks back into it.
  */
 export function CardDetail({ card, art, origin, onClose }: CardDetailProps) {
+  const t = useT();
   const panel = useRef<HTMLDivElement>(null);
   const [state, dispatch] = useReducer(
     (current: DetailState, event: DetailEvent) => reduce(detailStates, current, event),
@@ -182,7 +185,7 @@ export function CardDetail({ card, art, origin, onClose }: CardDetailProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const typeLine = [...card.cardTypes, ...(card.subTypes ?? [])].join(' ') || '—';
+  const typeLine = cardTypeLine(card.cardTypes, card.subTypes, t);
 
   return (
     <div className="card-detail" role="dialog" aria-modal="true" aria-label={`${card.name} details`} onClick={() => dispatch('CLOSE')}>
@@ -198,7 +201,7 @@ export function CardDetail({ card, art, origin, onClose }: CardDetailProps) {
           <dl className="card-detail-facts">
             <div><dt>Cost</dt><dd>{card.manaCost || '—'}</dd></div>
             <div><dt>Type</dt><dd>{typeLine}</dd></div>
-            {card.colors && <div><dt>Colour</dt><dd>{card.colors.length ? card.colors.join(', ') : 'colourless'}</dd></div>}
+            {card.colors && <div><dt>Colour</dt><dd>{colorLine(card.colors, t)}</dd></div>}
             <div><dt>Power / Toughness</dt><dd>{card.power ?? '—'} / {card.toughness ?? '—'}</dd></div>
             {card.deckLegal !== undefined && <div><dt>Deck legal</dt><dd>{card.deckLegal ? 'Yes' : 'No'}</dd></div>}
             {card.copyLimit !== undefined && <div><dt>Copy limit</dt><dd>{card.copyLimit === null ? 'Unlimited' : card.copyLimit}</dd></div>}

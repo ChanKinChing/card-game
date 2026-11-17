@@ -1,3 +1,4 @@
+import { useT } from '@card-game/ui';
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useGameStore } from '../store/gameStore';
@@ -18,6 +19,7 @@ const EMPTY_LOG: never[] = [];
  * exit to be cut short because a timeout and a duration drifted apart.
  */
 export default function LogDrawer() {
+  const t = useT();
   const count = useGameStore(useShallow((s) => (s.log ?? EMPTY_LOG).length));
   const [open, setOpen] = useState(false);
 
@@ -30,7 +32,7 @@ export default function LogDrawer() {
         aria-controls="log-drawer-panel"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="log-drawer-label">Log</span>
+        <span className="log-drawer-label">{t('board.log')}</span>
         <span className="log-drawer-count">{count}</span>
       </button>
       <div id="log-drawer-panel" className="log-drawer-panel" data-open={open} inert={!open}>
