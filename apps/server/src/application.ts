@@ -1,6 +1,7 @@
 import express, { type ErrorRequestHandler } from 'express';
 import http from 'node:http';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import helmet from 'helmet';
 import { Server as SocketIOServer, type Socket } from 'socket.io';
 import { PROTOCOL_VERSION, AutoPassRequestSchema, PlatformResponseSchema, isProtocolMessage, RoomSetupRequestSchema, JoinRoomRequestSchema, SubmitRpsSchema, RoomSnapshotRequestSchema, type ActionInspectionMessage, type OptionsMessage, type SnapshotMessage } from '@card-game/protocol';
@@ -104,8 +105,27 @@ export function createGameApplication(options: ApplicationOptions = {}) {
   const scenarios = new ScenarioService(persistent ?? new MemoryScenarioRepository(), runtime, auth, config, now);
   app.disable('x-powered-by');
   app.set('trust proxy', config.http.trustProxy);
+  /* Every request carries an id so a client-visible failure can be found in the
+     logs. An upstream proxy may already have assigned one; reuse it rather than
+     breaking the chain. */
+  app.use((request, response, next) => {
+    const id = request.get('x-request-id') ?? randomUUID();
+    response.locals.requestId = id;
+    response.setHeader('x-request-id', id);
+    next();
+  });
   app.use(helmet({ contentSecurityPolicy: { directives: { upgradeInsecureRequests: config.profile === 'production' ? [] : null } },
     strictTransportSecurity: config.profile === 'production' ? undefined : false }));
+  /* Probes sit ahead of the origin policy: a load balancer or systemd check has
+     no Origin header and must not be answered with a 403. Liveness only proves
+     the process is up; readiness waits for migrations and admin bootstrap. */
+  app.get('/healthz', (_request, response) => { response.json({ status: 'ok' }); });
+  app.get('/readyz', (_request, response) => {
+    void ready.then(
+      () => response.json({ status: 'ready' }),
+      () => response.status(503).json({ status: 'starting' }),
+    );
+  });
   app.use(originPolicy(origins));
   app.use((request,response,next)=>express.json({ limit: request.path.startsWith('/api/admin/scenarios') ? 32768 : config.http.bodyLimitBytes })(request,response,next));
   app.use('/api', (_request, response, next) => { response.setHeader('Cache-Control', 'no-store'); void ready.then(() => next()).catch(next); });
@@ -142,8 +162,20 @@ export function createGameApplication(options: ApplicationOptions = {}) {
   app.get(['/home', '/home/', '/play', '/play/', '/play/rooms/:roomId'], (_request, response) => response.sendFile(path.join(publicClientDirectory, 'index.html')));
   app.use('/deck-builder', express.static(path.join(__dirname, '..', '..', 'deck-builder', 'dist')));
   if (config.profile !== 'production') app.use('/admin', express.static(path.join(__dirname, '..', '..', 'admin', 'dist')));
-  const errors: ErrorRequestHandler = (error: unknown, _request, response, _next) => {
+  const errors: ErrorRequestHandler = (error: unknown, request, response, _next) => {
     const status = error instanceof AuthError ? error.status : typeof error === 'object' && error !== null && 'type' in error && error.type === 'entity.too.large' ? 413 : error instanceof SyntaxError ? 400 : 500;
+    /* A 500 is the only status the client cannot explain, so it is the only one
+       that must leave a server-side trace. The response stays generic; the log
+       carries the request id the client was given. */
+    if (status === 500) {
+      serverLogger.error('http:request:failed', 'Unhandled request failure', {
+        requestId: response.locals.requestId as string,
+        method: request.method,
+        path: request.path,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
     response.status(status).json({ protocolVersion: PROTOCOL_VERSION, message: error instanceof AuthError ? error.message : status === 500 ? 'Request could not be completed.' : 'Invalid request body.' });
   };
   app.use(errors);

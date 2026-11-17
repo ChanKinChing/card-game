@@ -5,6 +5,9 @@ import path from 'node:path';
 import { backupDatabase } from './stores/backup';
 import { loadServerConfig, ConfigurationError } from './config';
 
+/** How long a shutdown may take before the process is forced down. */
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const environment = mode === '--lab' ? { ...process.env, NODE_ENV:'development', FRONTEND_MODE:'built', CONFIG_FILE:process.env.CONFIG_FILE ?? path.resolve(__dirname,'../../../deploy/profiles/scenario-lab.example.json') } : mode === '--vite' ? { ...process.env, FRONTEND_MODE: 'vite' } : process.env;
@@ -19,9 +22,33 @@ async function main(): Promise<void> {
   const { server, io, ready } = createGameApplication({ databasePath, auditPath: path.resolve(root, config.logging.auditPath), effectiveConfig: config });
   await ready;
   server.listen(port, host, () => serverLogger.info('server:listening', 'Game server started', { port, host }));
-  const shutdown = () => { io.close(); };
-  process.once('SIGINT', shutdown); process.once('SIGTERM', shutdown);
+  /* A drain that never finishes is worse than a fast exit: systemd would wait out
+     TimeoutStopSec and SIGKILL the process, which is exactly when a WAL is left
+     half-written. The timer is unref'd so it cannot hold the process open by
+     itself, and it is cleared as soon as the sockets are gone. */
+  const shutdown = (signal: string) => {
+    serverLogger.info('server:shutdown', 'Draining connections', { signal });
+    const force = setTimeout(() => {
+      serverLogger.error('server:shutdown:timeout', 'Forcing exit after drain timeout', { signal });
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    force.unref();
+    io.close(() => { clearTimeout(force); process.exit(0); });
+  };
+  process.once('SIGINT', () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
 }
+/* Node's default for an unhandled rejection is to warn and keep running, which
+   leaves the process serving traffic in an unknown state. Both handlers log and
+   exit non-zero so a supervisor restarts a known-good process instead. */
+process.on('unhandledRejection', reason => {
+  serverLogger.error('server:unhandled-rejection', 'Unhandled promise rejection', { error: reason instanceof Error ? reason.message : String(reason), stack: reason instanceof Error ? reason.stack : undefined });
+  process.exit(1);
+});
+process.on('uncaughtException', error => {
+  serverLogger.error('server:uncaught-exception', 'Uncaught exception', { error: error.message, stack: error.stack });
+  process.exit(1);
+});
 void main().catch(error => {
   serverLogger.error('server:startup:failed', error instanceof ConfigurationError ? error.message : 'Server configuration or authentication initialization failed');
   process.exitCode = 1;

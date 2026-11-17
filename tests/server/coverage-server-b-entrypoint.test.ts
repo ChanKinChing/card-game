@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => {
     listen.mockImplementation((_port: number, _host: string | undefined, callback?: () => void) => {
       callback?.();
     });
+    /* The real io.close invokes its callback once the sockets are gone. Leaving
+       it uncalled would arm the drain timer for real and let it fire later. */
+    close.mockImplementation((callback?: () => void) => {
+      callback?.();
+    });
     created.push({ listen, close, options });
     return { server: { listen }, io: { close }, ready: Promise.resolve() };
   });
@@ -21,9 +26,10 @@ vi.mock('@server/stores/backup', () => ({ backupDatabase: mocks.backupDatabase }
 vi.mock('@card-game/engine/shared/game-logger', () => ({ serverLogger: mocks.logger }));
 
 type EntryApplication = { listen: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; options: unknown };
+type ProcessEvent = 'SIGINT' | 'SIGTERM' | 'unhandledRejection' | 'uncaughtException';
 type EntryResult = {
   application: EntryApplication | undefined;
-  added: (signal: 'SIGINT' | 'SIGTERM') => Array<() => void>;
+  added: (signal: ProcessEvent) => Array<(...args: never[]) => void>;
   exitCode: number | undefined;
   stop: () => void;
 };
@@ -60,9 +66,10 @@ function applyEnvironment(values: Record<string, string | undefined>): () => voi
 async function runEntry(args: string[], environment: Record<string, string | undefined> = {}): Promise<EntryResult> {
   const restoreEnvironment = applyEnvironment({ ...clearedEnvironment, ...environment });
   const argv = process.argv, exitCode = process.exitCode, known = mocks.created.length;
-  const before = { SIGINT: process.listeners('SIGINT').slice(), SIGTERM: process.listeners('SIGTERM').slice() };
-  const added = (signal: 'SIGINT' | 'SIGTERM') =>
-    process.listeners(signal).filter(listener => !before[signal].includes(listener)) as Array<() => void>;
+  const events: ProcessEvent[] = ['SIGINT', 'SIGTERM', 'unhandledRejection', 'uncaughtException'];
+  const before = Object.fromEntries(events.map(event => [event, process.listeners(event).slice()])) as Record<ProcessEvent, Array<(...args: never[]) => void>>;
+  const added = (signal: ProcessEvent) =>
+    process.listeners(signal).filter(listener => !before[signal].includes(listener)) as Array<(...args: never[]) => void>;
   process.argv = ['node', 'apps/server/dist/index.js', ...args];
   try {
     vi.resetModules();
@@ -73,8 +80,10 @@ async function runEntry(args: string[], environment: Record<string, string | und
       added,
       exitCode: process.exitCode,
       stop: () => {
-        for (const signal of ['SIGINT', 'SIGTERM'] as const)
-          for (const listener of added(signal)) process.removeListener(signal, listener);
+        /* The crash handlers call process.exit, so a leaked listener would take
+           the whole test worker down on the next unrelated rejection. */
+        for (const event of events)
+          for (const listener of added(event)) process.removeListener(event, listener);
       },
     };
   } finally {
@@ -105,9 +114,98 @@ describe('process entry point startup modes', () => {
     const shutdown = entry.added('SIGINT');
     expect(shutdown).toHaveLength(1);
     expect(entry.added('SIGTERM')).toHaveLength(1);
-    shutdown[0]();
-    expect(entry.application!.close).toHaveBeenCalledTimes(1);
-    entry.stop();
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      shutdown[0]();
+      expect(entry.application!.close).toHaveBeenCalledTimes(1);
+      expect(mocks.logger.info).toHaveBeenCalledWith('server:shutdown', 'Draining connections', { signal: 'SIGINT' });
+      expect(exit).toHaveBeenCalledWith(0);
+    } finally {
+      exit.mockRestore();
+      entry.stop();
+    }
+  });
+
+  it('names the signal that triggered the drain', async () => {
+    const entry = await runEntry([]);
+    await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      entry.added('SIGTERM')[0]();
+      expect(mocks.logger.info).toHaveBeenCalledWith('server:shutdown', 'Draining connections', { signal: 'SIGTERM' });
+    } finally {
+      exit.mockRestore();
+      entry.stop();
+    }
+  });
+
+  it('forces a non-zero exit when the drain never completes', async () => {
+    const entry = await runEntry([]);
+    await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
+    /* A drain that hangs is simulated by never calling the close callback. */
+    entry.application!.close.mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      vi.useFakeTimers();
+      entry.added('SIGINT')[0]();
+      expect(exit).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(10_000);
+      expect(mocks.logger.error).toHaveBeenCalledWith('server:shutdown:timeout', 'Forcing exit after drain timeout', { signal: 'SIGINT' });
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      vi.useRealTimers();
+      exit.mockRestore();
+      entry.stop();
+    }
+  });
+
+  it('exits non-zero on an unhandled rejection instead of serving in an unknown state', async () => {
+    const entry = await runEntry([]);
+    await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      const [handler] = entry.added('unhandledRejection');
+      handler(new Error('socket write after close'));
+      expect(mocks.logger.error).toHaveBeenCalledWith('server:unhandled-rejection', 'Unhandled promise rejection',
+        expect.objectContaining({ error: 'socket write after close' }));
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+      entry.stop();
+    }
+  });
+
+  it('describes a rejection that is not an Error', async () => {
+    // `Promise.reject('nope')` is legal and would otherwise log `undefined`.
+    const entry = await runEntry([]);
+    await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      const [handler] = entry.added('unhandledRejection');
+      handler('nope');
+      expect(mocks.logger.error).toHaveBeenCalledWith('server:unhandled-rejection', 'Unhandled promise rejection',
+        { error: 'nope', stack: undefined });
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+      entry.stop();
+    }
+  });
+
+  it('exits non-zero on an uncaught exception', async () => {
+    const entry = await runEntry([]);
+    await vi.waitFor(() => expect(entry.application?.listen).toHaveBeenCalled());
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      const [handler] = entry.added('uncaughtException');
+      handler(new Error('timer callback threw'));
+      expect(mocks.logger.error).toHaveBeenCalledWith('server:uncaught-exception', 'Uncaught exception',
+        expect.objectContaining({ error: 'timer callback threw' }));
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+      entry.stop();
+    }
   });
 
   it('binds the host supplied through the environment', async () => {
