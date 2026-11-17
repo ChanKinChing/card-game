@@ -148,10 +148,10 @@ describe('Milestone 6 public browser families and tab ownership', () => {
   it('signs in once, saves in the builder, plays a complete turn, then updates without revoking its seat', async () => {
     const web = browser(), other = browser();
     const identity = await web.client.authenticate('register', 'alice', password); await other.client.authenticate('register', 'bob', password);
-    const builder = new BuilderApi(undefined, web.client), saved = await builder.save(undefined, deck);
+    const builder = new BuilderApi(web.client), saved = await builder.save(deck);
     const a = await web.client.tab(), b = await other.client.tab(), p1 = await socketFor(a), p2 = await socketFor(b);
     const created = once<{ roomId: string }>(p1, 'roomCreated'); p1.emit('createRoom', { protocolVersion: 1, deckId: saved.id }); const roomId = (await created).roomId;
-    const bDeck = await new BuilderApi(undefined, other.client).save(undefined, deck);
+    const bDeck = await new BuilderApi(other.client).save(deck);
     const joined = once(p2, 'roomJoined'); p2.emit('joinRoom', { protocolVersion: 1, roomId, deckId: bDeck.id }); await joined;
     const room = () => application.store.getRoom(roomId)!;
     async function action(socket: Socket, actionId: string, data: Record<string, unknown> = {}) {
@@ -175,7 +175,7 @@ describe('Milestone 6 public browser families and tab ownership', () => {
     const initialTurn = room().turnNumber!, active = room().activeTurnPlayerId;
     const land = room().players[active].hand.find(card => card.blueprint.id === 'land-red')!;
     await action(active === a.playerId ? p1 : p2, 'play_land', { cardUuid: land.uuid, zoneRevision: land.state.zoneRevision ?? 0 });
-    expect((await builder.save(undefined, { ...deck, name: 'Edited while playing' }, saved.id)).name).toBe('Edited while playing');
+    expect((await builder.save({ ...deck, name: 'Edited while playing' }, saved.id)).name).toBe('Edited while playing');
     expect((await web.client.me()).session?.sessionId).toBe(identity.session?.sessionId);
     expect(application.auth.sessions.validate(a.token)).toBeDefined(); expect(p1.connected).toBe(true);
     expect((await verifyRoomResume(roomId, a, undefined, (input, init) => fetch(url + input, init))).playerId).toBe(a.playerId);

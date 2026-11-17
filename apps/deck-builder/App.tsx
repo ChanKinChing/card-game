@@ -10,13 +10,13 @@ import deckHeader from './assets/deck-header.webp';
 applyManaStyleFromUrl();
 /* `?card=original` puts the untouched card face back for comparison. */
 applyCardFaceFromUrl();
-import { BuilderApi, BuilderApiError } from './api';
+import { BuilderApi } from './api';
 import { builderConfig } from './config';
 import { changeCopies, deckCount, editableDeck, exportDeck, filterCatalog, importDeck, newDraft, type CatalogFilter } from './model';
 import { gameDeckUrl, gameDestination } from './handoff';
 import { readDraft, tabStorage, writeDraft, writeSession } from './storage';
 
-const api = new BuilderApi(undefined, publicSession);
+const api = new BuilderApi(publicSession);
 const message = (error: unknown) => error instanceof Error ? error.message : 'Unable to complete this request.';
 export function DeckPreview({ draft, cards }: { draft: DeckInput; cards: readonly CatalogCard[] }) {
   const catalog = new Map(cards.map(card => [card.id, card])), validation = validateDeck(draft, catalog);
@@ -88,12 +88,12 @@ export default function App() {
       if (controller.signal.aborted || currentEpoch !== epoch.current) return null;
       if (!identity.session) { if (session) changeSession(null); return []; }
       if (identity.session.sessionId !== session?.sessionId) { setSession(identity.session); setSaved(null); setDecks([]); }
-      return api.decks(undefined, controller.signal);
+      return api.decks(controller.signal);
     }).then(value => {
       if (value && !controller.signal.aborted && currentEpoch === epoch.current) setDecks(value);
     }).catch(reason => {
       if (controller.signal.aborted || currentEpoch !== epoch.current) return;
-      if ((reason instanceof BuilderApiError || reason instanceof PublicApiError) && (reason.status === 401 || reason.status === 403)) changeSession(null);
+      if (reason instanceof PublicApiError && (reason.status === 401 || reason.status === 403)) changeSession(null);
       setError(message(reason));
     }).finally(() => { if (!controller.signal.aborted && currentEpoch === epoch.current) setListBusy(false); });
     const timer = session ? setTimeout(() => {
@@ -132,15 +132,15 @@ export default function App() {
     if (!session || !catalogReady || !validation.valid || busy || listBusy) return;
     const currentEpoch = epoch.current; setBusy(true); setError(''); setNotice('');
     try {
-      const value = await api.save(undefined, validation.deck, asNew ? undefined : saved?.id);
+      const value = await api.save(validation.deck, asNew ? undefined : saved?.id);
       if (currentEpoch !== epoch.current) return;
       setDraft(editableDeck(value)); setSaved(value);
       setDecks(previous => [...previous.filter(deck => deck.id !== value.id), value]);
       setNotice('Deck saved. Play it in the game, or keep editing.');
     } catch (reason) {
       if (currentEpoch !== epoch.current) return;
-      if ((reason instanceof BuilderApiError || reason instanceof PublicApiError) && (reason.status === 401 || reason.status === 403)) changeSession(null);
-      if (reason instanceof BuilderApiError && reason.status === 404) setSaved(null);
+      if (reason instanceof PublicApiError && (reason.status === 401 || reason.status === 403)) changeSession(null);
+      if (reason instanceof PublicApiError && reason.status === 404) setSaved(null);
       setError(message(reason));
     } finally { if (currentEpoch === epoch.current) setBusy(false); }
   }
